@@ -1,427 +1,460 @@
+
 import os
 import time
 import json
-import sqlite3
 import logging
+import requests
+import psycopg2
 
 from datetime import datetime, timezone
-
-import psycopg2
-import requests
-
-from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
-
-
-# --------------------------------------------------
-# 1. LOAD CONFIGURATION
-# --------------------------------------------------
+from psycopg2.extras import RealDictCursor, Json
 
 load_dotenv()
 
-DB_CONFIG = {
-    "host": os.getenv("DB_HOST"),
-    "port": int(os.getenv("DB_PORT", "5432")),
-    "dbname": os.getenv("DB_NAME"),
-    "user": os.getenv("DB_USER"),
-    "password": os.getenv("DB_PASSWORD"),
-    "sslmode": os.getenv("DB_SSLMODE", "require"),
-    "connect_timeout": 10,
-}
+DATABASE_URL = os.getenv("DATABASE_URL")
+PORTAL_URL = os.getenv("PORTAL_URL")
+PORTAL_TOKEN = os.getenv("PORTAL_TOKEN")
 
-PORTAL_API_URL = os.getenv("PORTAL_API_URL")
-PORTAL_API_KEY = os.getenv("PORTAL_API_KEY")
-
-POLL_SECONDS = int(os.getenv("POLL_SECONDS", "5"))
+REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "15"))
+MAX_RETRIES = int(os.getenv("MAX_RETRIES", "8"))
+BASE_RETRY_SECONDS = int(os.getenv("BASE_RETRY_SECONDS", "5"))
+MAX_RETRY_SECONDS = int(os.getenv("MAX_RETRY_SECONDS", "300"))
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "50"))
 
-SQLITE_FILE = "sync_state.db"
-
-
-# --------------------------------------------------
-# 2. LOGGING
-# --------------------------------------------------
+CHANNEL = "report_sync_channel"
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
-logger = logging.getLogger("decxpert-sync")
+
+def get_connection():
+    return psycopg2.connect(DATABASE_URL)
 
 
 # --------------------------------------------------
-# 3. LOCAL CHECKPOINT DATABASE
+# DATABASE SETUP
 # --------------------------------------------------
 
-def init_checkpoint():
+def initialize_database():
+    conn = get_connection()
 
-    with sqlite3.connect(SQLITE_FILE) as conn:
+    try:
+        with conn:
+            with conn.cursor() as cur:
 
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS sync_state (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                last_synced_at TEXT,
-                last_report_id TEXT
-            )
-        """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS report_sync_outbox (
+                        id BIGSERIAL PRIMARY KEY,
+                        study_id TEXT NOT NULL,
+                        delivery_status TEXT NOT NULL DEFAULT 'PENDING',
+                        attempts INTEGER NOT NULL DEFAULT 0,
+                        next_attempt_at TIMESTAMPTZ NOT NULL
+                            DEFAULT CURRENT_TIMESTAMP,
+                        claimed_at TIMESTAMPTZ,
+                        created_at TIMESTAMPTZ NOT NULL
+                            DEFAULT CURRENT_TIMESTAMP,
+                        sent_at TIMESTAMPTZ,
+                        last_error TEXT
+                    );
+                """)
 
-        conn.execute("""
-            INSERT OR IGNORE INTO sync_state (
-                id,
-                last_synced_at,
-                last_report_id
-            )
-            VALUES (1, NULL, NULL)
-        """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS
+                    idx_report_sync_pending
+                    ON report_sync_outbox
+                    (next_attempt_at, id)
+                    WHERE delivery_status IN ('PENDING', 'PROCESSING');
+                """)
 
-        conn.commit()
+                cur.execute("""
+                    CREATE OR REPLACE FUNCTION enqueue_report_sync()
+                    RETURNS TRIGGER AS $$
+                    BEGIN
+                        IF TG_OP = 'INSERT' THEN
+                            IF NEW.status = 'SUCCESS' THEN
+                                INSERT INTO report_sync_outbox (study_id)
+                                VALUES (NEW.id);
+                            END IF;
 
+                        ELSIF NEW.status = 'SUCCESS'
+                              AND OLD.status IS DISTINCT FROM 'SUCCESS' THEN
 
-def get_checkpoint():
+                            INSERT INTO report_sync_outbox (study_id)
+                            VALUES (NEW.id);
+                        END IF;
 
-    with sqlite3.connect(SQLITE_FILE) as conn:
+                        RETURN NEW;
+                    END;
+                    $$ LANGUAGE plpgsql;
+                """)
 
-        row = conn.execute("""
-            SELECT last_synced_at, last_report_id
-            FROM sync_state
-            WHERE id = 1
-        """).fetchone()
+                cur.execute("""
+                    DROP TRIGGER IF EXISTS trg_report_sync ON studies;
+                """)
 
-    return row
+                cur.execute("""
+                    CREATE TRIGGER trg_report_sync
+                    AFTER INSERT OR UPDATE OF status ON studies
+                    FOR EACH ROW
+                    EXECUTE FUNCTION enqueue_report_sync();
+                """)
 
+    finally:
+        conn.close()
 
-def save_checkpoint(pushed_at, report_id):
-
-    with sqlite3.connect(SQLITE_FILE) as conn:
-
-        conn.execute("""
-            UPDATE sync_state
-            SET last_synced_at = ?,
-                last_report_id = ?
-            WHERE id = 1
-        """, (
-            pushed_at.isoformat(),
-            str(report_id)
-        ))
-
-        conn.commit()
-
-
-def initialize_first_checkpoint():
-
-    last_time, last_id = get_checkpoint()
-
-    if last_time is not None:
-        return
-
-    initial_time = os.getenv("INITIAL_SYNC_FROM", "").strip()
-
-    if initial_time:
-
-        parsed_time = datetime.fromisoformat(
-            initial_time.replace("Z", "+00:00")
-        )
-
-    else:
-
-        parsed_time = datetime.now(timezone.utc)
-
-        logger.warning(
-            "No INITIAL_SYNC_FROM provided. "
-            "Starting from current UTC time; "
-            "older reports will not be backfilled."
-        )
-
-    save_checkpoint(parsed_time, "")
-
-    logger.info(
-        "Initial checkpoint established: %s",
-        parsed_time.isoformat()
-    )
+    logging.info("Database trigger and outbox initialized.")
 
 
 # --------------------------------------------------
-# 4. DATABASE CONNECTION
+# FETCH STUDY DATA
 # --------------------------------------------------
 
-def get_db_connection():
+def fetch_study_payload(study_id):
+    conn = get_connection()
 
-    return psycopg2.connect(
-        **DB_CONFIG,
-        cursor_factory=RealDictCursor
-    )
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
 
+            cur.execute("""
+                SELECT
+                    s.id,
+                    s.modality,
 
-# --------------------------------------------------
-# 5. FETCH NEW PUSHED REPORTS
-# --------------------------------------------------
+                    pj."createdAt" AS processing_created_at,
+                    pj."completedAt" AS processing_completed_at,
+                    pj."imageCount" AS image_count,
+                    pj."serviceType" AS service_type,
 
-def fetch_new_reports():
+                    abs."studyDescription" AS investigation_name
 
-    last_time, last_id = get_checkpoint()
+                FROM studies s
 
-    if not last_time:
-        return []
+                LEFT JOIN LATERAL (
+                    SELECT
+                        p."createdAt",
+                        p."completedAt",
+                        p."imageCount",
+                        p."serviceType",
+                        p.id
 
-    checkpoint_time = datetime.fromisoformat(last_time)
+                    FROM processing_jobs p
+                    WHERE p."internalJobId" = s.id
 
-    query = """
-        SELECT
-            rr."id" AS report_id,
-            rr."studyId" AS study_id,
-            rr."clientId" AS client_id,
+                    ORDER BY p."createdAt" DESC
+                    LIMIT 1
+                ) pj ON TRUE
 
-            rr."studyUid" AS study_uid,
-            rr."serviceName" AS service_name,
-            rr."modality" AS modality,
-            rr."status" AS report_status,
+                LEFT JOIN available_bridge_studies abs
+                    ON abs."processingJobId" = pj.id
 
-            rr."generatedAt" AS ai_generated_at,
-            rr."reviewedAt" AS reviewed_at,
-            rr."approvedAt" AS approved_at,
-            rr."pushedAt" AS pushed_at,
+                WHERE s.id = %s
+                  AND s.status = 'SUCCESS'
 
-            s."createdAt" AS study_created_at,
+                LIMIT 1;
+            """, (study_id,))
 
-            c."code" AS client_code,
+            row = cur.fetchone()
 
-            COALESCE(
-                (
-                    SELECT SUM(ul."creditsUsed")
-                    FROM "usage_logs" ul
-                    WHERE ul."clientId" = rr."clientId"
-                      AND ul."studyUid" = rr."studyUid"
-                      AND ul."serviceName" = rr."serviceName"
-                      AND ul."success" = TRUE
-                ),
-                0
-            ) AS credits_used
-
-        FROM "report_reviews" rr
-
-        JOIN "clients" c
-            ON c."id" = rr."clientId"
-
-        LEFT JOIN "studies" s
-            ON s."id" = rr."studyId"
-
-        WHERE
-            rr."status" = 'PUSHED'
-            AND rr."pushedAt" IS NOT NULL
-            AND (
-                rr."pushedAt" > %s
-                OR (
-                    rr."pushedAt" = %s
-                    AND rr."id"::text > %s
+            if not row:
+                raise ValueError(
+                    f"Successful study data not found: {study_id}"
                 )
+
+            modality = (row["modality"] or "").strip().upper()
+
+            investigation = " ".join([
+                str(row["investigation_name"] or ""),
+                str(row["service_type"] or "")
+            ]).upper()
+
+            xray_modalities = {"XR", "CR", "CRI", "DX", "MG"}
+
+            xray_keywords = (
+                "X-RAY",
+                "XRAY",
+                "MAMMO",
+                "MAMMOGRAPHY",
+                "BARIUM SWALLOW",
+                "MCT",
+                "MCU",
+                "URETHROGRAM",
+                "CYSTOURETHROGRAM",
+                "GENITOURETHROGRAM",
+                "BARIUM ENEMA",
+                "FLUORO",
+                "FLUOROSCOPY",
+                "IVU",
+                "CONTRAST SWALLOW",
+                "FISTULOGRAM",
+                "DYE STUDY"
             )
 
-        ORDER BY
-            rr."pushedAt" ASC,
-            rr."id"::text ASC
+            is_xray = (
+                modality in xray_modalities
+                or any(word in investigation for word in xray_keywords)
+            )
 
-        LIMIT %s
-    """
+            if is_xray:
+                credits_used = int(row["image_count"] or 0)
 
-    with get_db_connection() as conn:
+                if credits_used <= 0:
+                    raise ValueError(
+                        "X-Ray image count is missing or zero. "
+                        "Not sending an incorrect credit value."
+                    )
+            else:
+                credits_used = 1
 
-        with conn.cursor() as cursor:
+            payload = {
+                "modality": row["modality"],
+                "processing_created_at": (
+                    row["processing_created_at"].isoformat()
+                    if row["processing_created_at"] else None
+                ),
+                "processing_completed_at": (
+                    row["processing_completed_at"].isoformat()
+                    if row["processing_completed_at"] else None
+                ),
+                "credits_used": credits_used
+            }
 
-            cursor.execute(query, (
-                checkpoint_time,
-                checkpoint_time,
-                last_id,
-                BATCH_SIZE
-            ))
+            return payload
 
-            return cursor.fetchall()
-
-
-# --------------------------------------------------
-# 6. DATETIME CONVERSION
-# --------------------------------------------------
-
-def format_datetime(value):
-
-    if value is None:
-        return None
-
-    return value.isoformat()
-
-
-# --------------------------------------------------
-# 7. BUILD PORTAL PAYLOAD
-# --------------------------------------------------
-
-def build_payload(row):
-
-    return {
-        "report_id": str(row["report_id"]),
-
-        "study_uid": row["study_uid"],
-
-        "client_code": row["client_code"],
-
-        "modality": row["modality"],
-
-        "service_name": row["service_name"],
-
-        "report_status": row["report_status"],
-
-        "timestamps": {
-            "study_created_at": format_datetime(
-                row["study_created_at"]
-            ),
-
-            "ai_generated_at": format_datetime(
-                row["ai_generated_at"]
-            ),
-
-            "reviewed_at": format_datetime(
-                row["reviewed_at"]
-            ),
-
-            "approved_at": format_datetime(
-                row["approved_at"]
-            ),
-
-            "pushed_at": format_datetime(
-                row["pushed_at"]
-            ),
-        },
-
-        "credits": {
-            "credits_used": int(row["credits_used"])
-        }
-    }
+    finally:
+        conn.close()
 
 
 # --------------------------------------------------
-# 8. SEND DATA TO PORTAL
+# CLAIM EVENTS
 # --------------------------------------------------
 
-def send_to_portal(payload):
+def claim_pending_events():
+    conn = get_connection()
 
+    try:
+        with conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+
+                # Recover events abandoned by a crashed worker.
+                cur.execute("""
+                    UPDATE report_sync_outbox
+                    SET delivery_status = 'PENDING',
+                        claimed_at = NULL
+                    WHERE delivery_status = 'PROCESSING'
+                      AND claimed_at < NOW() - INTERVAL '5 minutes';
+                """)
+
+                cur.execute("""
+                    WITH selected AS (
+                        SELECT id
+                        FROM report_sync_outbox
+                        WHERE delivery_status = 'PENDING'
+                          AND next_attempt_at <= NOW()
+                        ORDER BY id
+                        LIMIT %s
+                        FOR UPDATE SKIP LOCKED
+                    )
+                    UPDATE report_sync_outbox o
+                    SET delivery_status = 'PROCESSING',
+                        claimed_at = NOW()
+                    FROM selected
+                    WHERE o.id = selected.id
+                    RETURNING o.id, o.study_id, o.attempts;
+                """, (BATCH_SIZE,))
+
+                return cur.fetchall()
+
+    finally:
+        conn.close()
+
+
+# --------------------------------------------------
+# PORTAL REQUEST
+# --------------------------------------------------
+
+def send_to_portal(event_id, payload):
     headers = {
+        "Authorization": f"Bearer {PORTAL_TOKEN}",
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {PORTAL_API_KEY}",
-
-        # Portal must support this idempotency key
-        "Idempotency-Key": payload["report_id"]
+        "Idempotency-Key": str(event_id)
     }
 
     response = requests.post(
-        PORTAL_API_URL,
+        PORTAL_URL,
         json=payload,
         headers=headers,
-        timeout=30
+        timeout=REQUEST_TIMEOUT
     )
 
-    if not response.ok:
+    response.raise_for_status()
 
-        raise RuntimeError(
-            f"Portal API failed: "
-            f"{response.status_code} - {response.text}"
-        )
-
-    logger.info(
-        "Portal accepted report %s",
-        payload["report_id"]
-    )
+    return response.status_code
 
 
 # --------------------------------------------------
-# 9. ONE SYNC CYCLE
+# DELIVERY STATUS
 # --------------------------------------------------
 
-def sync_once():
+def mark_sent(event_id):
+    conn = get_connection()
 
-    reports = fetch_new_reports()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE report_sync_outbox
+                    SET delivery_status = 'SENT',
+                        sent_at = NOW(),
+                        claimed_at = NULL,
+                        last_error = NULL
+                    WHERE id = %s;
+                """, (event_id,))
 
-    if not reports:
+    finally:
+        conn.close()
 
-        logger.info("No new reports")
 
-        return
-
-    logger.info(
-        "Found %s new report(s)",
-        len(reports)
+def mark_retry(event_id, attempts, error):
+    delay = min(
+        BASE_RETRY_SECONDS * (2 ** attempts),
+        MAX_RETRY_SECONDS
     )
 
-    for row in reports:
+    conn = get_connection()
 
-        report_id = str(row["report_id"])
+    try:
+        with conn:
+            with conn.cursor() as cur:
+
+                if attempts >= MAX_RETRIES:
+                    cur.execute("""
+                        UPDATE report_sync_outbox
+                        SET delivery_status = 'DEAD',
+                            attempts = %s,
+                            claimed_at = NULL,
+                            last_error = %s
+                        WHERE id = %s;
+                    """, (attempts, str(error)[:4000], event_id))
+
+                    logging.error(
+                        "Event %s exhausted retries.", event_id
+                    )
+
+                else:
+                    cur.execute("""
+                        UPDATE report_sync_outbox
+                        SET delivery_status = 'PENDING',
+                            attempts = %s,
+                            next_attempt_at =
+                                NOW() + (%s * INTERVAL '1 second'),
+                            claimed_at = NULL,
+                            last_error = %s
+                        WHERE id = %s;
+                    """, (
+                        attempts,
+                        delay,
+                        str(error)[:4000],
+                        event_id
+                    ))
+
+                    logging.warning(
+                        "Event %s retry in %s seconds.",
+                        event_id, delay
+                    )
+
+    finally:
+        conn.close()
+
+
+# --------------------------------------------------
+# PROCESS EVENTS
+# --------------------------------------------------
+
+def process_pending_events():
+    events = claim_pending_events()
+
+    for event in events:
+        event_id = event["id"]
+        study_id = event["study_id"]
+        attempts = event["attempts"]
 
         try:
+            payload = fetch_study_payload(study_id)
 
-            payload = build_payload(row)
-
-            logger.info(
-                "Sending report: %s",
-                report_id
+            logging.info(
+                "Sending event %s | payload=%s",
+                event_id,
+                json.dumps(payload)
             )
 
-            send_to_portal(payload)
+            status_code = send_to_portal(event_id, payload)
 
-            # Save checkpoint ONLY after portal success
-            save_checkpoint(
-                row["pushed_at"],
-                row["report_id"]
+            mark_sent(event_id)
+
+            logging.info(
+                "Event %s delivered. HTTP %s",
+                event_id, status_code
             )
 
-            logger.info(
-                "Checkpoint updated: %s",
-                report_id
+        except Exception as exc:
+            mark_retry(event_id, attempts + 1, exc)
+
+            logging.exception(
+                "Event %s delivery failed.", event_id
             )
-
-        except Exception:
-
-            logger.exception(
-                "Failed report %s. "
-                "Checkpoint not advanced.",
-                report_id
-            )
-
-            # Stop here; retry this report next cycle
-            break
 
 
 # --------------------------------------------------
-# 10. CONTINUOUS SERVICE
+# LISTENER
 # --------------------------------------------------
 
-def run_service():
+def main():
+    if not DATABASE_URL or not PORTAL_URL or not PORTAL_TOKEN:
+        raise RuntimeError("Missing required .env configuration.")
 
-    init_checkpoint()
-
-    initialize_first_checkpoint()
-
-    logger.info(
-        "DecXpert sync service started. Polling every %s seconds.",
-        POLL_SECONDS
-    )
+    initialize_database()
 
     while True:
+        conn = None
 
         try:
+            conn = get_connection()
+            conn.autocommit = True
 
-            sync_once()
+            with conn.cursor() as cur:
+                cur.execute(f"LISTEN {CHANNEL};")
+
+            logging.info("Listening on PostgreSQL channel.")
+
+            # Drain existing events after LISTEN is active.
+            process_pending_events()
+
+            while True:
+                if conn.notifies:
+                    conn.notifies.clear()
+                    process_pending_events()
+
+                # Wait for a notification; no periodic DB polling.
+                if not conn.poll():
+                    time.sleep(0.2)
+
+        except KeyboardInterrupt:
+            logging.info("Worker stopped.")
+            break
 
         except Exception:
-
-            logger.exception(
-                "Sync cycle failed"
+            logging.exception(
+                "Listener disconnected. Reconnecting in 5 seconds."
             )
+            time.sleep(5)
 
-        time.sleep(POLL_SECONDS)
+        finally:
+            if conn:
+                conn.close()
 
-
-# --------------------------------------------------
-# 11. ENTRY POINT
-# --------------------------------------------------
 
 if __name__ == "__main__":
-
-    run_service()
+    main()
