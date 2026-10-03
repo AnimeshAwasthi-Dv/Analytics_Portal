@@ -1,18 +1,18 @@
 {
-  "report_id": "report_123",
-  "study_uid": "1.2.840.example",
-  "client_code": "MARENGO_AHMEDABAD",
+  "instance code ": "Marengo_Portal",
   "modality": "XR",
-  "service_name": "xray_chest",
-  "report_status": "PUSHED",
+  MOD == ( XR or CR or CRI or DX ) 
+  credits : xray.images or 1 
+  study description se nikale ki mammo hai ya special xray .
   "timestamps": {
-    "study_created_at": "2026-10-02T10:00:00",
-    "ai_generated_at": "2026-10-02T10:08:00",
-    "reviewed_at": "2026-10-02T10:15:00",
-    "approved_at": "2026-10-02T10:18:00",
-    "pushed_at": "2026-10-02T10:20:00"
-  },
-  "credits": {
-    "credits_used": 3
+    { send for reporting -> report genreated }
   }
+
+
+
+
+
+
+
+
 }
