@@ -1,17 +1,12 @@
+
+New payload 
+
 {
   "modality": "XR",
-  MOD == ( XR or CR or CRI or DX ) 
-  credits : xray.images or 1 
-  study description se nikale ki mammo hai ya special xray .
-  "timestamps": {
-    { send for reporting -> report genreated }
-  }
-
-
-
-
-
-
-
-
+  "processing_created_at": "2026-10-03T10:20:00",
+  "processing_completed_at": "2026-10-03T10:24:00",
+  "credits_used": 4
 }
+
+
+
