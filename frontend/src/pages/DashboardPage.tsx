@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import {
   Database,
   CheckCircle2,
@@ -7,296 +6,553 @@ import {
   Clock,
   AlertOctagon,
   Activity,
-  ArrowUpRight,
-  Wifi,
   Radio,
   Zap,
+  LogOut,
 } from "lucide-react";
 import { api } from "../services/api.ts";
-import { DatabaseInstance, SystemKPIs } from "../types";
-import { SyncFlowVisualization } from "../Components/SyncFlowVisualization";
 
-export const DashboardPage: React.FC = () => {
-  const [kpis, setKpis] = useState<SystemKPIs | null>(null);
-  const [instances, setInstances] = useState<DatabaseInstance[]>([]);
+interface DashboardKPIs {
+  totalInstances: number;
+  onlineInstances: number;
+  recordsSynced: number;
+  recordsPending: number | null;
+  failedSyncs: number;
+  apiStatus: string;
+  avgResponseTime: string | null;
+}
+
+interface DashboardInstance {
+  id: string;
+  name: string;
+  status: "Online" | "Delayed" | "Offline";
+  lastSyncTime: string | null;
+  recordsSynced: number;
+  recordsPending: number | null;
+  successRate: number;
+  failedSyncs: number;
+}
+
+interface DashboardData {
+  kpis: DashboardKPIs;
+  instances: DashboardInstance[];
+  lastUpdated: string;
+}
+
+interface DashboardPageProps {
+  user?: {
+    name?: string;
+    email?: string;
+  };
+  onLogout?: () => void;
+}
+
+export const DashboardPage: React.FC<DashboardPageProps> = ({
+  user,
+  onLogout,
+}) => {
+  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [syncingId, setSyncingId] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<string>("");
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
 
-  const loadData = async () => {
+  const loadDashboard = async (showRefresh = false) => {
     try {
-      const [kpiData, instanceData] = await Promise.all([
-        api.getKPIs(),
-        api.getInstances(),
-      ]);
-      setKpis(kpiData);
-      setInstances(instanceData);
-      setLastUpdated(new Date().toTimeString().split(" ")[0]);
-    } catch (err) {
-      console.error(err);
+      if (showRefresh) {
+        setRefreshing(true);
+      }
+
+      setError("");
+
+      const data = await api.getDashboard();
+
+      setDashboard(data);
+    } catch (err: any) {
+      console.error("Dashboard loading error:", err);
+
+      setError(
+        err?.response?.data?.detail ||
+          "Unable to fetch dashboard data from the server."
+      );
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
   useEffect(() => {
-    loadData();
-    const timer = setInterval(loadData, 6000);
+    loadDashboard();
+
+    // Automatically refresh every 6 seconds
+    const timer = setInterval(() => {
+      loadDashboard();
+    }, 6000);
+
     return () => clearInterval(timer);
   }, []);
 
-  const handleManualSync = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setSyncingId(id);
-    try {
-      await api.triggerSync(id);
-      await loadData();
-    } finally {
-      setSyncingId(null);
+  const formatNumber = (value: number | null | undefined) => {
+    if (value === null || value === undefined) {
+      return "—";
     }
+
+    return value.toLocaleString();
   };
 
-  const offlineInstance = instances.find((i) => i.status === "Offline");
+  const formatLastUpdated = (value: string) => {
+    if (!value) {
+      return "—";
+    }
 
-  return (
-    <div className="space-y-6 pb-12">
-      {/* Top Banner & Refresh State */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center text-blue-600">
-            <Radio className="w-5 h-5 animate-pulse" />
-          </div>
-          <div>
-            <h2 className="text-base font-bold text-slate-900 leading-tight">
-              Centralized Synchronization Dashboard
-            </h2>
-            <p className="text-xs text-slate-500">
-              Aggregating live ingestion streams from 5 regional hospital PACS/EHR databases
-            </p>
-          </div>
-        </div>
+    const date = new Date(value);
 
-        <div className="flex items-center gap-3 self-end sm:self-auto">
-          <div className="text-right text-xs">
-            <span className="text-slate-400">Last Synced: </span>
-            <span className="font-mono font-medium text-slate-700">{lastUpdated || "Syncing..."}</span>
-          </div>
-          <button
-            onClick={loadData}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors border border-slate-300"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            Refresh
-          </button>
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+
+    return date.toLocaleTimeString();
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="text-center">
+          <RefreshCw className="w-7 h-7 text-blue-600 animate-spin mx-auto mb-3" />
+
+          <p className="text-sm font-semibold text-slate-700">
+            Loading dashboard...
+          </p>
+
+          <p className="text-xs text-slate-400 mt-1">
+            Fetching data from Central Sync Portal
+          </p>
         </div>
       </div>
+    );
+  }
 
-      {/* Offline Alert if any instance goes down */}
-      {offlineInstance && (
-        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <AlertOctagon className="w-5 h-5 text-rose-600 shrink-0" />
-            <div>
-              <p className="font-bold text-xs">{offlineInstance.name} ({offlineInstance.id}) is OFFLINE</p>
-              <p className="text-[11px] text-rose-700">
-                Last successful sync: {offlineInstance.lastSyncTime} • Failed attempts: {offlineInstance.failedSyncs}
+  if (error && !dashboard) {
+    return (
+      <div className="min-h-screen bg-slate-50 p-6">
+        <div className="max-w-7xl mx-auto">
+          <div className="bg-white border border-rose-200 rounded-xl p-6">
+            <div className="flex items-center gap-3">
+              <AlertOctagon className="w-6 h-6 text-rose-600" />
+
+              <div>
+                <h2 className="font-bold text-slate-900">
+                  Unable to load dashboard
+                </h2>
+
+                <p className="text-sm text-slate-500 mt-1">
+                  {error}
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => loadDashboard(true)}
+              className="mt-5 flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Try Again
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const kpis = dashboard?.kpis;
+  const instances = dashboard?.instances ?? [];
+
+  const offlineInstances = instances.filter(
+    (instance) => instance.status === "Offline"
+  );
+
+  return (
+    <div className="min-h-screen bg-slate-50">
+      <div className="max-w-7xl mx-auto p-6 space-y-6">
+
+        {/* HEADER */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center">
+                <Radio className="w-5 h-5 text-blue-600 animate-pulse" />
+              </div>
+
+              <div>
+                <h1 className="text-lg font-bold text-slate-900">
+                  Centralized Synchronization Dashboard
+                </h1>
+
+                <p className="text-xs text-slate-500 mt-1">
+                  Live data from the Central Sync Portal database
+                </p>
+
+                {user?.email && (
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Logged in as {user.email}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+
+              <div className="text-right">
+                <p className="text-[10px] text-slate-400">
+                  Last Updated
+                </p>
+
+                <p className="text-xs font-mono font-semibold text-slate-700">
+                  {formatLastUpdated(dashboard?.lastUpdated || "")}
+                </p>
+              </div>
+
+              <button
+                onClick={() => loadDashboard(true)}
+                disabled={refreshing}
+                className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg disabled:opacity-60"
+              >
+                <RefreshCw
+                  className={`w-3.5 h-3.5 ${
+                    refreshing ? "animate-spin" : ""
+                  }`}
+                />
+
+                {refreshing ? "Refreshing..." : "Refresh"}
+              </button>
+
+              {onLogout && (
+                <button
+                  onClick={onLogout}
+                  className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  Logout
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* ERROR WHILE REFRESHING */}
+        {error && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+            <p className="text-xs font-medium text-amber-800">
+              {error}
+            </p>
+          </div>
+        )}
+
+        {/* OFFLINE ALERT */}
+        {offlineInstances.length > 0 && (
+          <div className="bg-rose-50 border border-rose-200 rounded-xl p-4">
+            <div className="flex items-center gap-3">
+              <AlertOctagon className="w-5 h-5 text-rose-600" />
+
+              <div>
+                <p className="text-sm font-bold text-rose-900">
+                  {offlineInstances.length} instance
+                  {offlineInstances.length > 1 ? "s" : ""} with no recent
+                  sync activity
+                </p>
+
+                <p className="text-xs text-rose-700 mt-1">
+                  {offlineInstances
+                    .map((instance) => instance.name)
+                    .join(", ")}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* KPI CARDS */}
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
+
+          {/* TOTAL INSTANCES */}
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-slate-500">
+                Total Instances
+              </span>
+
+              <Database className="w-4 h-4 text-blue-600" />
+            </div>
+
+            <div className="mt-3">
+              <p className="text-2xl font-bold text-slate-900">
+                {kpis?.totalInstances ?? 0}
+              </p>
+
+              <p className="text-[11px] text-slate-400 mt-1">
+                Registered API sources
               </p>
             </div>
           </div>
-          <button
-            onClick={(e) => handleManualSync(offlineInstance.id, e)}
-            className="px-3 py-1.5 text-xs font-semibold bg-rose-600 text-white hover:bg-rose-700 rounded-lg shadow-sm"
-          >
-            Retry Connection
-          </button>
-        </div>
-      )}
 
-      {/* Top 6 KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3.5">
-        {/* Card 1 */}
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
-          <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-xs font-medium">Total DB Instances</span>
-            <Database className="w-4 h-4 text-blue-600" />
-          </div>
-          <div>
-            <div className="text-2xl font-bold text-slate-900">{kpis?.totalInstances ?? 5}</div>
-            <span className="text-[11px] text-slate-400">Independent Nodes</span>
-          </div>
-        </div>
+          {/* ONLINE */}
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-slate-500">
+                Online
+              </span>
 
-        {/* Card 2 */}
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
-          <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-xs font-medium">Online Instances</span>
-            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-          </div>
-          <div>
-            <div className="text-2xl font-bold text-emerald-600 font-mono">
-              {kpis?.onlineInstances ?? 5} / {kpis?.totalInstances ?? 5}
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
             </div>
-            <span className="text-[11px] text-emerald-600 font-semibold">100% Operational</span>
-          </div>
-        </div>
 
-        {/* Card 3 */}
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
-          <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-xs font-medium">Records Synced</span>
-            <RefreshCw className="w-4 h-4 text-indigo-600" />
-          </div>
-          <div>
-            <div className="text-2xl font-bold text-slate-900 font-mono">
-              {kpis?.recordsSynced.toLocaleString() ?? "1,248,560"}
+            <div className="mt-3">
+              <p className="text-2xl font-bold text-emerald-600 font-mono">
+                {kpis?.onlineInstances ?? 0}
+                <span className="text-sm text-slate-400">
+                  {" "}
+                  / {kpis?.totalInstances ?? 0}
+                </span>
+              </p>
+
+              <p className="text-[11px] text-slate-400 mt-1">
+                Recent sync activity
+              </p>
             </div>
-            <span className="text-[11px] text-slate-400">Total Central Ingest</span>
           </div>
-        </div>
 
-        {/* Card 4 */}
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
-          <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-xs font-medium">Records Pending</span>
-            <Clock className="w-4 h-4 text-amber-600" />
-          </div>
-          <div>
-            <div className="text-2xl font-bold text-amber-600 font-mono">
-              {kpis?.recordsPending.toLocaleString() ?? "2,341"}
+          {/* RECORDS */}
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-slate-500">
+                Records Synced
+              </span>
+
+              <RefreshCw className="w-4 h-4 text-indigo-600" />
             </div>
-            <span className="text-[11px] text-slate-400">Queued in source DBs</span>
-          </div>
-        </div>
 
-        {/* Card 5 */}
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
-          <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-xs font-medium">Failed Syncs</span>
-            <AlertOctagon className="w-4 h-4 text-rose-600" />
-          </div>
-          <div>
-            <div className="text-2xl font-bold text-rose-600 font-mono">
-              {kpis?.failedSyncs ?? "17"}
+            <div className="mt-3">
+              <p className="text-2xl font-bold text-slate-900 font-mono">
+                {formatNumber(kpis?.recordsSynced)}
+              </p>
+
+              <p className="text-[11px] text-slate-400 mt-1">
+                Central sync records
+              </p>
             </div>
-            <span className="text-[11px] text-rose-500 font-semibold">Requires Attention</span>
           </div>
-        </div>
 
-        {/* Card 6 */}
-        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
-          <div className="flex items-center justify-between text-slate-500 mb-2">
-            <span className="text-xs font-medium">API Status</span>
-            <Activity className="w-4 h-4 text-emerald-600" />
-          </div>
-          <div>
-            <div className="text-xl font-bold text-emerald-600 flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-              {kpis?.apiStatus ?? "ONLINE"}
+          {/* PENDING */}
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-slate-500">
+                Records Pending
+              </span>
+
+              <Clock className="w-4 h-4 text-amber-600" />
             </div>
-            <span className="text-[11px] text-slate-400 font-mono">Lat: {kpis?.avgResponseTime ?? "84ms"}</span>
+
+            <div className="mt-3">
+              <p className="text-2xl font-bold text-amber-600 font-mono">
+                {formatNumber(kpis?.recordsPending)}
+              </p>
+
+              <p className="text-[11px] text-slate-400 mt-1">
+                Not available in current DB
+              </p>
+            </div>
+          </div>
+
+          {/* FAILED */}
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-slate-500">
+                Failed Syncs
+              </span>
+
+              <AlertOctagon className="w-4 h-4 text-rose-600" />
+            </div>
+
+            <div className="mt-3">
+              <p className="text-2xl font-bold text-rose-600 font-mono">
+                {formatNumber(kpis?.failedSyncs)}
+              </p>
+
+              <p className="text-[11px] text-slate-400 mt-1">
+                Failed sync events
+              </p>
+            </div>
+          </div>
+
+          {/* API STATUS */}
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-slate-500">
+                API Status
+              </span>
+
+              <Activity className="w-4 h-4 text-emerald-600" />
+            </div>
+
+            <div className="mt-3">
+              <p className="text-xl font-bold text-emerald-600 flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+
+                {kpis?.apiStatus ?? "UNKNOWN"}
+              </p>
+
+              <p className="text-[11px] text-slate-400 mt-1">
+                Latency: {kpis?.avgResponseTime ?? "—"}
+              </p>
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Visual Architecture Section */}
-      <SyncFlowVisualization instances={instances} />
+        {/* INSTANCE HEALTH */}
+        <div className="space-y-3">
 
-      {/* DATABASE INSTANCE HEALTH (5 Cards) */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
-            <Zap className="w-4 h-4 text-blue-600" />
-            Database Instance Health (5 Nodes)
-          </h3>
-          <Link
-            to="/instances"
-            className="text-xs font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-1"
-          >
-            Manage Instances <ArrowUpRight className="w-3.5 h-3.5" />
-          </Link>
-        </div>
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+              <Zap className="w-4 h-4 text-blue-600" />
+              Database Instance Health
+            </h2>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-          {instances.map((inst) => {
-            const isOnline = inst.status === "Online";
-            const isDelayed = inst.status === "Delayed";
+            <span className="text-xs text-slate-400">
+              {instances.length} registered node
+              {instances.length !== 1 ? "s" : ""}
+            </span>
+          </div>
 
-            return (
-              <div
-                key={inst.id}
-                className={`bg-white rounded-xl border p-4 shadow-sm hover:shadow-md transition-all flex flex-col justify-between ${
-                  isOnline
-                    ? "border-slate-200"
-                    : isDelayed
-                    ? "border-amber-300 bg-amber-50/20"
-                    : "border-rose-300 bg-rose-50/20"
-                }`}
-              >
-                <div>
-                  {/* Header */}
-                  <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                    <div>
-                      <span className="text-xs font-extrabold text-slate-900 font-mono">{inst.id}</span>
-                      <p className="text-xs text-slate-600 font-semibold truncate max-w-[130px]">{inst.name}</p>
-                    </div>
-                    <span
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 ${
-                        isOnline
-                          ? "bg-emerald-100 text-emerald-700"
-                          : isDelayed
-                          ? "bg-amber-100 text-amber-700"
-                          : "bg-rose-100 text-rose-700"
-                      }`}
-                    >
+          {instances.length === 0 ? (
+            <div className="bg-white border border-slate-200 rounded-xl p-8 text-center">
+              <Database className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+
+              <p className="text-sm font-semibold text-slate-600">
+                No database instances found
+              </p>
+
+              <p className="text-xs text-slate-400 mt-1">
+                No API key/source is currently registered in the database.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+
+              {instances.map((instance) => {
+                const isOnline = instance.status === "Online";
+                const isDelayed = instance.status === "Delayed";
+
+                return (
+                  <div
+                    key={instance.id}
+                    className={`bg-white rounded-xl border p-4 shadow-sm ${
+                      isOnline
+                        ? "border-slate-200"
+                        : isDelayed
+                        ? "border-amber-300 bg-amber-50/20"
+                        : "border-rose-300 bg-rose-50/20"
+                    }`}
+                  >
+                    {/* HEADER */}
+                    <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+
+                      <div className="min-w-0">
+                        <p className="text-xs font-extrabold text-slate-900 font-mono">
+                          {instance.id}
+                        </p>
+
+                        <p className="text-xs text-slate-600 font-semibold truncate mt-0.5">
+                          {instance.name}
+                        </p>
+                      </div>
+
                       <span
-                        className={`w-1.5 h-1.5 rounded-full ${
-                          isOnline ? "bg-emerald-600" : isDelayed ? "bg-amber-600" : "bg-rose-600"
+                        className={`text-[10px] font-bold px-2 py-1 rounded-full flex items-center gap-1 ${
+                          isOnline
+                            ? "bg-emerald-100 text-emerald-700"
+                            : isDelayed
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-rose-100 text-rose-700"
                         }`}
-                      ></span>
-                      {inst.status}
-                    </span>
-                  </div>
+                      >
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full ${
+                            isOnline
+                              ? "bg-emerald-600"
+                              : isDelayed
+                              ? "bg-amber-600"
+                              : "bg-rose-600"
+                          }`}
+                        />
 
-                  {/* Body Metrics */}
-                  <div className="py-3 space-y-1.5 text-xs">
-                    <div className="flex justify-between text-slate-500">
-                      <span>Last Sync:</span>
-                      <strong className="text-slate-800 font-mono">{inst.lastSyncTime}</strong>
+                        {instance.status}
+                      </span>
                     </div>
-                    <div className="flex justify-between text-slate-500">
-                      <span>Records Synced:</span>
-                      <strong className="text-slate-900 font-mono">{inst.recordsSynced.toLocaleString()}</strong>
+
+                    {/* METRICS */}
+                    <div className="py-4 space-y-2 text-xs">
+
+                      <div className="flex justify-between gap-3">
+                        <span className="text-slate-500">
+                          Last Sync
+                        </span>
+
+                        <strong className="text-slate-800 font-mono text-right">
+                          {instance.lastSyncTime ?? "Never"}
+                        </strong>
+                      </div>
+
+                      <div className="flex justify-between gap-3">
+                        <span className="text-slate-500">
+                          Records
+                        </span>
+
+                        <strong className="text-slate-900 font-mono">
+                          {formatNumber(instance.recordsSynced)}
+                        </strong>
+                      </div>
+
+                      <div className="flex justify-between gap-3">
+                        <span className="text-slate-500">
+                          Pending
+                        </span>
+
+                        <strong className="text-amber-600 font-mono">
+                          {formatNumber(instance.recordsPending)}
+                        </strong>
+                      </div>
+
+                      <div className="flex justify-between gap-3">
+                        <span className="text-slate-500">
+                          Success Rate
+                        </span>
+
+                        <strong className="text-emerald-600 font-mono">
+                          {instance.successRate}%
+                        </strong>
+                      </div>
+
+                      <div className="flex justify-between gap-3">
+                        <span className="text-slate-500">
+                          Failed
+                        </span>
+
+                        <strong className="text-rose-600 font-mono">
+                          {instance.failedSyncs}
+                        </strong>
+                      </div>
                     </div>
-                    <div className="flex justify-between text-slate-500">
-                      <span>Pending:</span>
-                      <strong className="text-amber-600 font-mono">{inst.recordsPending}</strong>
-                    </div>
-                    <div className="flex justify-between text-slate-500">
-                      <span>Success Rate:</span>
-                      <strong className="text-emerald-600 font-mono">{inst.successRate}%</strong>
+
+                    {/* FOOTER */}
+                    <div className="pt-3 border-t border-slate-100">
+                      <p className="text-[10px] text-slate-400">
+                        Status is inferred from recent sync activity.
+                      </p>
                     </div>
                   </div>
-                </div>
-
-                {/* Footer Action */}
-                <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
-                  <Link
-                    to={`/instances/${inst.id}`}
-                    className="text-[11px] font-semibold text-blue-600 hover:underline"
-                  >
-                    View Details
-                  </Link>
-                  <button
-                    disabled={syncingId === inst.id || !isOnline}
-                    onClick={(e) => handleManualSync(inst.id, e)}
-                    className="px-2 py-1 text-[11px] font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 rounded transition-colors disabled:opacity-50"
-                  >
-                    {syncingId === inst.id ? "Syncing..." : "Sync Now"}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>

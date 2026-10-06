@@ -6,35 +6,23 @@ import {
   useLocation,
   useNavigate,
 } from "react-router-dom";
-import { Sidebar } from "./Components/Sidebar.tsx";
-import { TopNavbar } from "./Components/TopNavbar";
+
 import { DashboardPage } from "./pages/DashboardPage";
-import { DatabaseInstancesPage } from "./pages/DatabaseInstancesPage";
-import { InstanceDetailsPage } from "./pages/InstanceDetailsPage";
-import { SyncMonitoringPage } from "./pages/SyncMonitoringPage";
-import { IncomingDataPage } from "./pages/IncomingDataPage";
-// import { ReportsPage } from "./pages/ReportsPage";
-// import { ReportDetailPage } from "./pages/ReportDetailPage";
-import { AnalyticsPage } from "./pages/AnalyticsPage";
-import { ApiManagementPage } from "./pages/ApiManagementPage";
-import { SyncLogsPage } from "./pages/SyncLogsPage";
-import { DatabaseConfigPage } from "./pages/DatabaseConfigPage";
-import { SettingsPage } from "./pages/SettingsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { api } from "./services/api.ts";
 
 function App() {
   const [user, setUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [onlineCount, setOnlineCount] = useState(5);
+
   const location = useLocation();
   const navigate = useNavigate();
 
   useEffect(() => {
     api
       .getCurrentUser()
-      .then((usr) => {
-        setUser(usr);
+      .then((currentUser) => {
+        setUser(currentUser);
       })
       .catch(() => {
         setUser(null);
@@ -42,52 +30,36 @@ function App() {
       .finally(() => {
         setLoading(false);
       });
-
-    // Check DB counts
-    api.getInstances().then((insts) => {
-      setOnlineCount(insts.filter((i) => i.status === "Online").length);
-    });
   }, []);
 
-  const getPageTitle = (pathname: string) => {
-    if (pathname.startsWith("/dashboard")) return "Central Sync Dashboard";
-    if (pathname.startsWith("/instances/") && pathname !== "/instances")
-      return "Database Instance Details";
-    if (pathname.startsWith("/instances")) return "Database Instances";
-    if (pathname.startsWith("/sync")) return "Sync Monitoring";
-    if (pathname.startsWith("/incoming-data")) return "Incoming Data Stream";
-    if (pathname.startsWith("/reports/") && pathname !== "/reports")
-      return "Clinical Report Details";
-    if (pathname.startsWith("/reports")) return "Synchronized Reports";
-    if (pathname.startsWith("/analytics")) return "Sync & Ingestion Analytics";
-    if (pathname.startsWith("/api-management")) return "API & Key Management";
-    if (pathname.startsWith("/logs")) return "Sync Audit Logs";
-    if (pathname.startsWith("/database-config")) return "Database Configuration";
-    if (pathname.startsWith("/settings")) return "Portal Settings";
-    return "Central Sync Portal";
+  const handleLogout = async () => {
+    try {
+      await api.logout();
+    } catch (error) {
+      console.error("Logout error:", error);
+    } finally {
+      setUser(null);
+      navigate("/login");
+    }
   };
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#090e1a] flex items-center justify-center text-xs text-slate-400 font-mono">
-        Connecting to Central Sync Portal Gateway...
-      </div>
-    );
-  }
+      <div className="min-h-screen bg-[#090e1a] flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-6 h-6 border-2 border-slate-600 border-t-blue-500 rounded-full animate-spin mx-auto mb-3" />
 
-  if (!user && location.pathname !== "/login") {
-    return (
-      <LoginPage
-        onLoginSuccess={(loggedUser) => {
-          setUser(loggedUser);
-          navigate("/dashboard");
-        }}
-      />
+          <p className="text-xs text-slate-400 font-mono">
+            Connecting to Central Sync Portal...
+          </p>
+        </div>
+      </div>
     );
   }
 
   return (
     <Routes>
+      {/* LOGIN */}
       <Route
         path="/login"
         element={
@@ -104,49 +76,34 @@ function App() {
         }
       />
 
-      {/* Main Admin App Layout */}
+      {/* DASHBOARD */}
       <Route
-        path="/*"
+        path="/dashboard"
         element={
-          <div className="flex h-screen bg-[#f8fafc] text-slate-800 overflow-hidden font-sans">
-            {/* Dark Navy Sidebar */}
-            <Sidebar
-              onlineCount={onlineCount}
-              onLogout={() => setUser(null)}
+          user ? (
+            <DashboardPage
+              user={user}
+              onLogout={handleLogout}
             />
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
 
-            {/* Light Content Area */}
-            <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-              {/* Top Navbar */}
-              <TopNavbar
-                pageTitle={getPageTitle(location.pathname)}
-                userEmail={user?.email || "admin@local.com"}
-                apiStatus="ONLINE"
-              />
+      {/* DEFAULT */}
+      <Route
+        path="/"
+        element={<Navigate to="/dashboard" replace />}
+      />
 
-              {/* Page Content Viewport */}
-              <main className="flex-1 overflow-y-auto p-6">
-                <div className="max-w-7xl mx-auto">
-                  <Routes>
-                    <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                    <Route path="/dashboard" element={<DashboardPage />} />
-                    <Route path="/instances" element={<DatabaseInstancesPage />} />
-                    <Route path="/instances/:id" element={<InstanceDetailsPage />} />
-                    <Route path="/sync" element={<SyncMonitoringPage />} />
-                    <Route path="/incoming-data" element={<IncomingDataPage />} />
-                    <Route path="/reports" element={<ReportsPage />} />
-                    <Route path="/reports/:id" element={<ReportDetailPage />} />
-                    <Route path="/analytics" element={<AnalyticsPage />} />
-                    <Route path="/api-management" element={<ApiManagementPage />} />
-                    <Route path="/logs" element={<SyncLogsPage />} />
-                    <Route path="/database-config" element={<DatabaseConfigPage />} />
-                    <Route path="/settings" element={<SettingsPage />} />
-                    <Route path="*" element={<Navigate to="/dashboard" replace />} />
-                  </Routes>
-                </div>
-              </main>
-            </div>
-          </div>
+      <Route
+        path="*"
+        element={
+          <Navigate
+            to={user ? "/dashboard" : "/login"}
+            replace
+          />
         }
       />
     </Routes>

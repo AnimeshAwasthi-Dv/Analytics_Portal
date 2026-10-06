@@ -123,223 +123,146 @@ def get_profile(
 # ============================================================
 # DASHBOARD
 # ============================================================
-
-@router.get("/dashboard")
-def dashboard(
+@router.get("/api/v1/dashboard")
+def get_dashboard(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
-    """
-    Return live dashboard statistics from the database.
-    """
+    # Get all registered API keys / instances
+    api_keys = db.query(ApiKey).all()
 
-    # --------------------------------------------------------
-    # TOTAL SOURCE INSTANCES
-    # --------------------------------------------------------
-    # Currently every ApiKey represents a configured source.
-    total_instances = db.query(ApiKey).count()
+    # Get all sync records
+    sync_records = db.query(SyncRecord).all()
 
-    # --------------------------------------------------------
-    # TOTAL SYNC RECORDS
-    # --------------------------------------------------------
-    records_synced = (
-        db.query(SyncRecord)
-        .filter(SyncRecord.sync_status == "SYNCED")
-        .count()
-    )
-
-    # --------------------------------------------------------
-    # FAILED SYNCS
-    # --------------------------------------------------------
-    failed_syncs = (
-        db.query(SyncLog)
-        .filter(
-            SyncLog.event_type == "SYNC",
-            SyncLog.status == "FAILED"
-        )
-        .count()
-    )
-
-    # --------------------------------------------------------
-    # SUCCESSFUL SYNC ATTEMPTS
-    # --------------------------------------------------------
-    successful_syncs = (
-        db.query(SyncLog)
-        .filter(
-            SyncLog.event_type == "SYNC",
-            SyncLog.status == "SUCCESS"
-        )
-        .count()
-    )
-
-    # --------------------------------------------------------
-    # SUCCESS RATE
-    # --------------------------------------------------------
-    total_attempts = successful_syncs + failed_syncs
-
-    if total_attempts > 0:
-        success_rate = round(
-            (successful_syncs / total_attempts) * 100,
-            2
-        )
-    else:
-        success_rate = 0
-
-    # --------------------------------------------------------
-    # SOURCE / INSTANCE DETAILS
-    # --------------------------------------------------------
-
-    api_keys = (
-        db.query(ApiKey)
-        .order_by(ApiKey.id)
-        .all()
-    )
+    # Get all sync logs
+    sync_logs = db.query(SyncLog).all()
 
     instances = []
 
     for api_key in api_keys:
-
         instance_code = api_key.key_name
 
-        # -----------------------------------------------
-        # Successful records for this instance
-        # -----------------------------------------------
+        instance_records = [
+            record
+            for record in sync_records
+            if record.instance_code == instance_code
+        ]
 
-        synced_count = (
-            db.query(SyncRecord)
-            .filter(
-                SyncRecord.instance_code == instance_code,
-                SyncRecord.sync_status == "SYNCED"
-            )
-            .count()
+        instance_logs = [
+            log
+            for log in sync_logs
+            if log.instance_code == instance_code
+            and log.event_type == "SYNC"
+        ]
+
+        successful_syncs = sum(
+            1
+            for log in instance_logs
+            if log.status == "SUCCESS"
         )
 
-        # -----------------------------------------------
-        # Successful sync attempts
-        # -----------------------------------------------
-
-        instance_success = (
-            db.query(SyncLog)
-            .filter(
-                SyncLog.instance_code == instance_code,
-                SyncLog.event_type == "SYNC",
-                SyncLog.status == "SUCCESS"
-            )
-            .count()
+        failed_syncs = sum(
+            1
+            for log in instance_logs
+            if log.status == "FAILED"
         )
 
-        # -----------------------------------------------
-        # Failed sync attempts
-        # -----------------------------------------------
+        total_attempts = successful_syncs + failed_syncs
 
-        instance_failed = (
-            db.query(SyncLog)
-            .filter(
-                SyncLog.instance_code == instance_code,
-                SyncLog.event_type == "SYNC",
-                SyncLog.status == "FAILED"
+        success_rate = (
+            round(
+                (successful_syncs / total_attempts) * 100,
+                1,
             )
-            .count()
+            if total_attempts > 0
+            else 0
         )
 
-        # -----------------------------------------------
-        # Last successful sync
-        # -----------------------------------------------
+        synced_records = [
+            record
+            for record in instance_records
+            if record.sync_status == "SYNCED"
+        ]
 
-        last_sync = (
-            db.query(SyncRecord)
-            .filter(
-                SyncRecord.instance_code == instance_code,
-                SyncRecord.sync_status == "SYNCED"
-            )
-            .order_by(SyncRecord.synced_at.desc())
-            .first()
-        )
+        last_sync = None
 
-        # -----------------------------------------------
-        # Last sync time
-        # -----------------------------------------------
+        if synced_records:
+            timestamps = [
+                record.synced_at
+                for record in synced_records
+                if record.synced_at is not None
+            ]
 
-        if last_sync and last_sync.synced_at:
+            if timestamps:
+                last_sync = max(timestamps)
 
-            last_sync_time = last_sync.synced_at.strftime(
-                "%H:%M:%S"
-            )
-
-            last_sync_timestamp = (
-                last_sync.synced_at.isoformat()
-            )
-
-        else:
-
-            last_sync_time = "Never"
-            last_sync_timestamp = None
-
-        # -----------------------------------------------
-        # Instance success rate
-        # -----------------------------------------------
-
-        instance_attempts = (
-            instance_success + instance_failed
-        )
-
-        if instance_attempts > 0:
-            instance_success_rate = round(
-                (instance_success / instance_attempts) * 100,
-                2
-            )
-        else:
-            instance_success_rate = 0
-
-        # -----------------------------------------------
-        # Current status
-        # -----------------------------------------------
-        #
-        # True ONLINE/OFFLINE requires heartbeat storage.
-        # For now we show:
-        #
-        # ACTIVE  = source has successfully synced
-        # INACTIVE = source has never synced
-        #
-        # -----------------------------------------------
+        # Determine status from recent sync activity
+        status = "Offline"
 
         if last_sync:
-            instance_status = "ACTIVE"
-        else:
-            instance_status = "INACTIVE"
+            last_sync_naive = (
+                last_sync.replace(tzinfo=None)
+                if last_sync.tzinfo
+                else last_sync
+            )
 
-        instances.append({
-            "id": instance_code,
-            "name": instance_code,
-            "status": instance_status,
-            "lastSyncTime": last_sync_time,
-            "lastSyncTimestamp": last_sync_timestamp,
-            "recordsSynced": synced_count,
-            "recordsPending": 0,
-            "failedSyncs": instance_failed,
-            "successRate": instance_success_rate
-        })
+            age_seconds = (
+                datetime.utcnow() - last_sync_naive
+            ).total_seconds()
 
-    # --------------------------------------------------------
-    # RESPONSE
-    # --------------------------------------------------------
+            if age_seconds <= 300:
+                status = "Online"
+            elif age_seconds <= 900:
+                status = "Delayed"
+
+        instances.append(
+            {
+                "id": instance_code,
+                "name": instance_code,
+                "status": status,
+                "lastSyncTime": (
+                    last_sync.strftime("%Y-%m-%d %H:%M:%S")
+                    if last_sync
+                    else None
+                ),
+                "recordsSynced": len(synced_records),
+                "recordsPending": None,
+                "successRate": success_rate,
+                "failedSyncs": failed_syncs,
+            }
+        )
+
+    # Overall statistics
+    total_instances = len(instances)
+
+    online_instances = sum(
+        1
+        for instance in instances
+        if instance["status"] == "Online"
+    )
+
+    total_records_synced = sum(
+        instance["recordsSynced"]
+        for instance in instances
+    )
+
+    total_failed_syncs = sum(
+        instance["failedSyncs"]
+        for instance in instances
+    )
 
     return {
         "kpis": {
             "totalInstances": total_instances,
-            "onlineInstances": sum(
-                1
-                for instance in instances
-                if instance["status"] == "ACTIVE"
-            ),
-            "recordsSynced": records_synced,
-            "recordsPending": 0,
-            "failedSyncs": failed_syncs,
-            "successRate": success_rate,
+            "onlineInstances": online_instances,
+            "recordsSynced": total_records_synced,
+            "recordsPending": None,
+            "failedSyncs": total_failed_syncs,
             "apiStatus": "ONLINE",
-            "avgResponseTime": "N/A"
+            "avgResponseTime": None,
         },
-        "instances": instances
+        "instances": instances,
+        "lastUpdated": datetime.utcnow().isoformat(),
     }
 
 # ============================================================
