@@ -10,7 +10,7 @@ import {
   Activity,
   Layers,
 } from "lucide-react";
-import { api } from "../services/api";
+import { api } from "../services/api.ts";
 
 interface SyncMonitorItem {
   syncId: string;

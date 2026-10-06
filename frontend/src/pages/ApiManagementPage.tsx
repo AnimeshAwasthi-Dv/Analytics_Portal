@@ -12,7 +12,7 @@ import {
   Clock,
   Zap,
 } from "lucide-react";
-import { api } from "../services/api";
+import { api } from "../services/api.ts";
 import { ApiEndpointStat, ApiKeyItem, SystemKPIs } from "../types";
 
 export const ApiManagementPage: React.FC = () => {

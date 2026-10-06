@@ -15,7 +15,7 @@ import {
   Layers,
   CheckCircle2,
 } from "lucide-react";
-import { api } from "../services/api";
+import { api } from "../services/api.ts";
 
 interface SidebarProps {
   onlineCount: number;

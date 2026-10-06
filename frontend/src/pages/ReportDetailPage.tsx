@@ -13,7 +13,7 @@ import {
   ShieldCheck,
   Radio,
 } from "lucide-react";
-import { api } from "../services/api";
+import { api } from "../services/api.ts";
 import { SyncReport } from "../types";
 
 export const ReportDetailPage: React.FC = () => {

@@ -12,7 +12,7 @@ import {
   Radio,
   Zap,
 } from "lucide-react";
-import { api } from "../services/api";
+import { api } from "../services/api.ts";
 import { DatabaseInstance, SystemKPIs } from "../types";
 import { SyncFlowVisualization } from "../Components/SyncFlowVisualization";
 

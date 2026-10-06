@@ -10,7 +10,7 @@ import {
   Eye,
   Filter,
 } from "lucide-react";
-import { api } from "../services/api";
+import { api } from "../services/api.ts";
 import { SyncLogEvent } from "../types";
 
 export const SyncLogsPage: React.FC = () => {

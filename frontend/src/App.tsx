@@ -6,7 +6,7 @@ import {
   useLocation,
   useNavigate,
 } from "react-router-dom";
-import { Sidebar } from "./Components/Sidebar";
+import { Sidebar } from "./Components/Sidebar.tsx";
 import { TopNavbar } from "./Components/TopNavbar";
 import { DashboardPage } from "./pages/DashboardPage";
 import { DatabaseInstancesPage } from "./pages/DatabaseInstancesPage";
@@ -21,7 +21,7 @@ import { SyncLogsPage } from "./pages/SyncLogsPage";
 import { DatabaseConfigPage } from "./pages/DatabaseConfigPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { LoginPage } from "./pages/LoginPage";
-import { api } from "./services/api";
+import { api } from "./services/api.ts";
 
 function App() {
   const [user, setUser] = useState<any>(null);

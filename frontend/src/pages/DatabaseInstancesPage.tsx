@@ -11,7 +11,7 @@ import {
   FileCode,
   ShieldCheck,
 } from "lucide-react";
-import { api } from "../services/api";
+import { api } from "../services/api.ts";
 import { DatabaseInstance } from "../types";
 
 export const DatabaseInstancesPage: React.FC = () => {

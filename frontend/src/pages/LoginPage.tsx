@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Layers, Lock, Mail, ArrowRight, ShieldCheck } from "lucide-react";
-import { api } from "../services/api";
+import { api } from "../services/api.ts";
 
 interface LoginPageProps {
   onLoginSuccess: (user: any) => void;

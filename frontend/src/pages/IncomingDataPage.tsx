@@ -9,7 +9,7 @@ import {
   Search,
   Filter,
 } from "lucide-react";
-import { api } from "../services/api";
+import { api } from "../services/api.ts";
 import { IncomingEvent } from "../types";
 
 export const IncomingDataPage: React.FC = () => {
