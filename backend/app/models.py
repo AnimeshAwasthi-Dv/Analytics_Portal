@@ -14,16 +14,12 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-
-class QCRecord(Base):
-    __tablename__ = "qc_records"
+class ApiKey(Base):
+    __tablename__ = "api_keys"
 
     id = Column(Integer, primary_key=True, index=True)
-    study_id = Column(String(100), nullable=False)
-    status = Column(String(50), default="Pending")
-    remarks = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
+    key_name = Column(String, unique=True, nullable=False)
+    api_key = Column(String, nullable=False)
 
 class DatabaseConfig(Base):
     __tablename__ = "database_configs"
@@ -35,7 +31,6 @@ class DatabaseConfig(Base):
     database_name = Column(String(100), nullable=False)
     username = Column(String(100), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-
 
 class SourceInstance(Base):
     __tablename__ = "source_instances"
@@ -58,7 +53,6 @@ class SourceInstance(Base):
         DateTime(timezone=True),
         server_default=func.now()
     )
-
 
 class SyncRecord(Base):
     __tablename__ = "sync_records"

@@ -6,3 +6,4 @@ python-dotenv
 python-jose[cryptography]
 pwdlib[argon2]
 pydantic[email]
+alembic==1.20.0

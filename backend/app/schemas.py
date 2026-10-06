@@ -1,4 +1,4 @@
-
+from datetime import datetime
 from pydantic import BaseModel, EmailStr
 from typing import Optional
 
@@ -17,17 +17,8 @@ class UserResponse(BaseModel):
         from_attributes = True
 
 
-class QCRecordCreate(BaseModel):
-    study_id: str
-    status: str = "Pending"
-    remarks: Optional[str] = None
-
-
-class QCRecordResponse(BaseModel):
-    id: int
-    study_id: str
-    status: str
-    remarks: Optional[str] = None
-
-    class Config:
-        from_attributes = True
+class SyncPayload(BaseModel):
+    modality: Optional[str] = None
+    processing_created_at: Optional[datetime] = None
+    processing_completed_at: Optional[datetime] = None
+    credits_used: int = 0

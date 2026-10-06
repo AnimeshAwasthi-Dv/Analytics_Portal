@@ -4,19 +4,20 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from app.auth_api import verify_api_key
 
 from app.database import get_db
 from app.models import (
     User,
-    QCRecord,
     SourceInstance,
     SyncRecord,
-    SyncLog
+    SyncLog,
+    ApiKey
 )
 from app.schemas import (
     LoginRequest,
     UserResponse,
-    QCRecordCreate
+    SyncPayload
 )
 from app.auth import (
     verify_password,
@@ -28,15 +29,6 @@ from app.auth import (
 router = APIRouter()
 
 
-# ============================================================
-# SYNC PAYLOAD
-# ============================================================
-
-class SyncPayload(BaseModel):
-    modality: str | None = None
-    processing_created_at: datetime | None = None
-    processing_completed_at: datetime | None = None
-    credits_used: int = 0
 
 
 # ============================================================
@@ -138,43 +130,6 @@ def dashboard(
         "user": current_user.email
     }
 
-
-# ============================================================
-# QC APIs
-# ============================================================
-
-@router.get("/qc")
-def get_qc_records(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    return (
-        db.query(QCRecord)
-        .order_by(QCRecord.id.desc())
-        .all()
-    )
-
-
-@router.post("/qc")
-def create_qc_record(
-    data: QCRecordCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-
-    record = QCRecord(
-        study_id=data.study_id,
-        status=data.status,
-        remarks=data.remarks
-    )
-
-    db.add(record)
-    db.commit()
-    db.refresh(record)
-
-    return record
-
-
 # ============================================================
 # CENTRAL SYNC API
 # ============================================================
@@ -182,13 +137,16 @@ def create_qc_record(
 @router.post("/api/v1/sync")
 def receive_sync(
     data: SyncPayload,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    authenticated_key: ApiKey = Depends(verify_api_key)
 ):
     """
     Receive synchronization data from a source instance.
 
-    Payload:
+    Authentication:
+        Authorization: Bearer <API_KEY>
 
+    Payload:
     {
         "modality": "XR",
         "processing_created_at": "2026-10-03T10:20:00",
@@ -198,29 +156,30 @@ def receive_sync(
     """
 
     # --------------------------------------------------------
-    # Temporary instance identification
+    # Determine source instance
     # --------------------------------------------------------
-    # The payload itself does NOT contain instance_code.
-    # This will later be determined from API authentication.
-    instance_code = "UNKNOWN"
+
+    instance_code = authenticated_key.key_name
 
     # --------------------------------------------------------
     # Create sync record
     # --------------------------------------------------------
 
-    record = SyncRecord(
-        instance_code=instance_code,
-        modality=data.modality,
-        processing_created_at=data.processing_created_at,
-        processing_completed_at=data.processing_completed_at,
-        credits_used=data.credits_used,
-        sync_status="SYNCED"
-    )
+    for _ in range(data.credits_used):
+        record = SyncRecord(
+            instance_code=instance_code,
+            modality=data.modality,
+            processing_created_at=data.processing_created_at,
+            processing_completed_at=data.processing_completed_at,
+            credits_used=1,
+            sync_status="SYNCED"
+        )
 
-    db.add(record)
+        db.add(record)
+
 
     # --------------------------------------------------------
-    # Create sync log
+    # Create success log
     # --------------------------------------------------------
 
     log = SyncLog(
@@ -243,7 +202,6 @@ def receive_sync(
     except Exception:
         db.rollback()
 
-        # Record failure in log
         failed_log = SyncLog(
             instance_code=instance_code,
             event_type="SYNC",
@@ -274,6 +232,8 @@ def receive_sync(
 # HEARTBEAT API
 # ============================================================
 
+
+# need changes in the script so wait 
 @router.post("/api/v1/heartbeat")
 def heartbeat(
     db: Session = Depends(get_db)
@@ -287,64 +247,3 @@ def heartbeat(
         "message": "Heartbeat received"
     }
 
-
-# ============================================================
-# SOURCE DATABASE INSTANCES
-# ============================================================
-
-@router.get("/api/v1/instances")
-def get_instances(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """
-    Return all configured source database instances.
-    """
-
-    return (
-        db.query(SourceInstance)
-        .order_by(SourceInstance.id)
-        .all()
-    )
-
-
-# ============================================================
-# SYNC RECORDS
-# ============================================================
-
-@router.get("/api/v1/sync-records")
-def get_sync_records(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """
-    Return the latest synchronization records.
-    """
-
-    return (
-        db.query(SyncRecord)
-        .order_by(SyncRecord.id.desc())
-        .limit(500)
-        .all()
-    )
-
-
-# ============================================================
-# SYNC LOGS
-# ============================================================
-
-@router.get("/api/v1/logs")
-def get_sync_logs(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """
-    Return synchronization logs.
-    """
-
-    return (
-        db.query(SyncLog)
-        .order_by(SyncLog.id.desc())
-        .limit(500)
-        .all()
-    )

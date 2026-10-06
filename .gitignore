@@ -1,16 +1,23 @@
-# Environment variables
+# Environment variables / secrets
 .env
-.env.*
 
-# Python
+# Virtual environment
 venv/
 .venv/
-__pycache__/
-*.pyc
 
-# Node
-node_modules/
-dist/
+# Python cache
+__pycache__/
+*.py[cod]
+
+# SQLite database
+*.db
+*.sqlite
+*.sqlite3
 
 # IDE
 .vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
