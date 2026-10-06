@@ -14,3 +14,5 @@ dist/
 
 # IDE
 .vscode/
+# Local SQLite database
+backend/central_sync.db
