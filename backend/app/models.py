@@ -1,4 +1,3 @@
-
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text
 from sqlalchemy.sql import func
 
@@ -20,6 +19,7 @@ class QCRecord(Base):
     __tablename__ = "qc_records"
 
     id = Column(Integer, primary_key=True, index=True)
+    study_id = Column(String(100), nullable=False)
     status = Column(String(50), default="Pending")
     remarks = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -35,7 +35,8 @@ class DatabaseConfig(Base):
     database_name = Column(String(100), nullable=False)
     username = Column(String(100), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
+
+
 class SourceInstance(Base):
     __tablename__ = "source_instances"
 
@@ -64,7 +65,6 @@ class SyncRecord(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
-
     instance_code = Column(
         String(50),
         nullable=False,
@@ -91,26 +91,6 @@ class SyncRecord(Base):
     )
 
     synced_at = Column(
-        DateTime(timezone=True),
-        server_default=func.now()
-    )
-
-
-class SyncLog(Base):
-    __tablename__ = "sync_logs"
-
-    id = Column(Integer, primary_key=True, index=True)
-
-
-    instance_code = Column(String(50), nullable=True)
-
-    event_type = Column(String(50), nullable=False)
-
-    status = Column(String(30), nullable=False)
-
-    message = Column(Text, nullable=True)
-
-    created_at = Column(
         DateTime(timezone=True),
         server_default=func.now()
     )
