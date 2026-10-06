@@ -94,3 +94,34 @@ class SyncRecord(Base):
         DateTime(timezone=True),
         server_default=func.now()
     )
+
+class SyncLog(Base):
+    __tablename__ = "sync_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    instance_code = Column(
+        String(50),
+        nullable=False,
+        index=True
+    )
+
+    event_type = Column(
+        String(50),
+        nullable=False
+    )
+
+    status = Column(
+        String(30),
+        nullable=False
+    )
+
+    message = Column(
+        Text,
+        nullable=True
+    )
+
+    created_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now()
+    )
