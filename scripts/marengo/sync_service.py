@@ -44,6 +44,7 @@ CHANNEL = "report_sync_channel"
 #
 report_queue = queue.Queue()
 
+#queue for failure retries
 
 # Queue containing ONLY failed payloads.
 #
