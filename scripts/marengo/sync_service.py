@@ -1,11 +1,10 @@
-
 import os
 import json
-import time
 import queue
 import logging
 import threading
 import select
+
 import requests
 import psycopg2
 
@@ -27,21 +26,50 @@ REQUEST_TIMEOUT = int(
     os.getenv("REQUEST_TIMEOUT", "15")
 )
 
-
-# This is basically the channel when ever a new study is success 
-# this sends notifiaction 
+# PostgreSQL LISTEN/NOTIFY channel
 CHANNEL = "report_sync_channel"
 
-# In-memory FIFO queue  -> this is only active when the portal fails 
-# to send the study and it keeps it in the queue.
+
+# ==================================================
+# QUEUES
+# ==================================================
+
+# Queue containing NEW successful studies.
+#
+# This queue contains study IDs because we need the
+# study ID to fetch the payload from PostgreSQL.
+#
+# Example:
+# [101, 102, 103]
+#
 report_queue = queue.Queue()
 
-# Prevent duplicate enqueueing while an event is
-# currently waiting or being processed.
+
+# Queue containing ONLY failed payloads.
+#
+# IMPORTANT:
+# No study ID is stored here.
+#
+# Example:
+#
+# [
+#     {
+#         "modality": "CT",
+#         "processing_created_at": "...",
+#         "processing_completed_at": "...",
+#         "credits_used": 1
+#     }
+# ]
+#
+retry_queue = queue.Queue()
+
+
+# Prevent duplicate processing of the same NEW study
+# while it is waiting in the new-study queue.
 queued_studies = set()
 
 queue_lock = threading.Lock()
-# delivery worker and listner acts differently
+
 
 # ==================================================
 # LOGGING
@@ -65,16 +93,20 @@ def get_connection():
 # DATABASE TRIGGER SETUP
 # ==================================================
 
-# cursor -> tool that allows python to communicate SQL commands to postgresql.
-# 
-
 def initialize_database():
 
     conn = get_connection()
 
     try:
+
         with conn:
+
             with conn.cursor() as cur:
+
+                # ------------------------------------------
+                # Create / replace PostgreSQL notification
+                # function
+                # ------------------------------------------
 
                 cur.execute("""
                     CREATE OR REPLACE FUNCTION
@@ -84,6 +116,7 @@ def initialize_database():
 
                     BEGIN
 
+                        -- New study inserted directly as SUCCESS
                         IF TG_OP = 'INSERT' THEN
 
                             IF NEW.status = 'SUCCESS' THEN
@@ -95,6 +128,8 @@ def initialize_database():
 
                             END IF;
 
+
+                        -- Existing study changes to SUCCESS
                         ELSIF NEW.status = 'SUCCESS'
                               AND OLD.status IS DISTINCT FROM 'SUCCESS'
                         THEN
@@ -113,10 +148,21 @@ def initialize_database():
                     $$ LANGUAGE plpgsql;
                 """)
 
+
+                # ------------------------------------------
+                # Remove old trigger if it exists
+                # ------------------------------------------
+
                 cur.execute("""
                     DROP TRIGGER IF EXISTS
-                    trg_report_sync ON studies;
+                    trg_report_sync
+                    ON studies;
                 """)
+
+
+                # ------------------------------------------
+                # Create trigger
+                # ------------------------------------------
 
                 cur.execute("""
                     CREATE TRIGGER trg_report_sync
@@ -131,13 +177,17 @@ def initialize_database():
                 """)
 
     finally:
+
         conn.close()
 
-    logging.info("PostgreSQL notification trigger initialized.")
+
+    logging.info(
+        "PostgreSQL notification trigger initialized."
+    )
 
 
 # ==================================================
-# FETCH REPORT DATA
+# FETCH REPORT PAYLOAD
 # ==================================================
 
 def fetch_study_payload(study_id):
@@ -156,12 +206,20 @@ def fetch_study_payload(study_id):
                     s.id,
                     s.modality,
 
-                    pj."createdAt" AS processing_created_at,
-                    pj."completedAt" AS processing_completed_at,
-                    pj."imageCount" AS image_count,
-                    pj."serviceType" AS service_type,
+                    pj."createdAt"
+                        AS processing_created_at,
 
-                    abs."studyDescription" AS investigation_name
+                    pj."completedAt"
+                        AS processing_completed_at,
+
+                    pj."imageCount"
+                        AS image_count,
+
+                    pj."serviceType"
+                        AS service_type,
+
+                    abs."studyDescription"
+                        AS investigation_name
 
                 FROM studies s
 
@@ -196,7 +254,9 @@ def fetch_study_payload(study_id):
 
             """, (study_id,))
 
+
             row = cur.fetchone()
+
 
             if not row:
 
@@ -204,18 +264,34 @@ def fetch_study_payload(study_id):
                     f"Successful study not found: {study_id}"
                 )
 
+
+            # ==================================================
+            # DETERMINE MODALITY
+            # ==================================================
+
             modality = (
                 row["modality"] or ""
             ).strip().upper()
+
 
             investigation = " ".join([
                 str(row["investigation_name"] or ""),
                 str(row["service_type"] or "")
             ]).upper()
 
+
+            # ==================================================
+            # X-RAY DETECTION
+            # ==================================================
+
             xray_modalities = {
-                "XR", "CR", "CRI", "DX", "MG"
+                "XR",
+                "CR",
+                "CRI",
+                "DX",
+                "MG"
             }
+
 
             xray_keywords = (
                 "X-RAY",
@@ -237,6 +313,7 @@ def fetch_study_payload(study_id):
                 "DYE STUDY"
             )
 
+
             is_xray = (
                 modality in xray_modalities
                 or any(
@@ -245,11 +322,17 @@ def fetch_study_payload(study_id):
                 )
             )
 
+
+            # ==================================================
+            # CALCULATE CREDITS
+            # ==================================================
+
             if is_xray:
 
                 credits_used = int(
                     row["image_count"] or 0
                 )
+
 
                 if credits_used <= 0:
 
@@ -260,6 +343,11 @@ def fetch_study_payload(study_id):
             else:
 
                 credits_used = 1
+
+
+            # ==================================================
+            # BUILD PAYLOAD
+            # ==================================================
 
             payload = {
 
@@ -281,9 +369,12 @@ def fetch_study_payload(study_id):
 
             }
 
+
             return payload
 
+
     finally:
+
         conn.close()
 
 
@@ -291,111 +382,411 @@ def fetch_study_payload(study_id):
 # PORTAL DELIVERY
 # ==================================================
 
-def send_to_portal(study_id, payload):
-    """Send one report, retrying with capped exponential backoff."""
+def send_to_portal(payload):
+    """
+    Attempt to send one payload to the portal.
+
+    IMPORTANT:
+    This function performs ONLY ONE attempt.
+
+    It does NOT retry internally.
+
+    If it fails, the caller decides what to do
+    with the payload.
+    """
+
     headers = {
-        "Authorization": f"Bearer {PORTAL_TOKEN}",
-        "Content-Type": "application/json",
-        # Effective only if the portal backend honors this key.
-        "Idempotency-Key": str(study_id),
+
+        "Authorization":
+            f"Bearer {PORTAL_TOKEN}",
+
+        "Content-Type":
+            "application/json"
+
     }
 
-    attempt = 0
-    while True:
-        attempt += 1
+
+    try:
+
+        logging.info(
+            "Sending payload to portal: %s",
+            json.dumps(payload)
+        )
+
+
+        response = requests.post(
+
+            PORTAL_URL,
+
+            json=payload,
+
+            headers=headers,
+
+            timeout=REQUEST_TIMEOUT
+        )
+
+
+        response.raise_for_status()
+
+
+        logging.info(
+            "Portal delivery successful. HTTP %s",
+            response.status_code
+        )
+
+
+        return True
+
+
+    except requests.RequestException as exc:
+
+        logging.error(
+            "Portal delivery failed: %s",
+            exc
+        )
+
+
+        return False
+
+
+# ==================================================
+# RETRY QUEUE
+# ==================================================
+
+def enqueue_failed_payload(payload):
+
+    """
+    Add ONLY the payload to the retry queue.
+
+    Study ID is intentionally NOT stored.
+    """
+
+    retry_queue.put(payload)
+
+
+    logging.warning(
+        "Payload added to retry queue. "
+        "Retry queue size: %s",
+        retry_queue.qsize()
+    )
+
+
+# ==================================================
+# RETRY FAILED PAYLOADS
+# ==================================================
+
+def retry_failed_payloads():
+
+    """
+    Retry the payloads that previously failed.
+
+    Important behavior:
+
+    If a payload succeeds:
+        Remove it from retry queue.
+
+    If a payload fails:
+        Put it back into retry queue.
+
+    We process only the number of items that were
+    already present when this function started.
+
+    Therefore, a failed retry does not create an
+    infinite loop inside this function.
+    """
+
+    retry_count = retry_queue.qsize()
+
+
+    if retry_count == 0:
+
+        logging.info(
+            "No failed payloads waiting for retry."
+        )
+
+        return
+
+
+    logging.info(
+        "Starting retry of %s failed payload(s).",
+        retry_count
+    )
+
+
+    for _ in range(retry_count):
+
         try:
-            logging.info("Sending study %s | Attempt %s", study_id, attempt)
-            response = requests.post(
-                PORTAL_URL,
-                json=payload,
-                headers=headers,
-                timeout=REQUEST_TIMEOUT,
-            )
-            response.raise_for_status()
+
+            payload = retry_queue.get_nowait()
+
+        except queue.Empty:
+
+            break
+
+
+        try:
+
             logging.info(
-                "Study %s successfully delivered. HTTP %s",
-                study_id,
-                response.status_code,
+                "Retrying previously failed payload."
             )
-            return response.status_code
-        except requests.RequestException as exc:
-            delay = min(2 ** (attempt - 1), 30)
-            logging.exception(
-                "Portal delivery failed for study %s on attempt %s. "
-                "Retrying in %s seconds.",
-                study_id,
-                attempt,
-                delay,
+
+
+            success = send_to_portal(
+                payload
             )
-            time.sleep(delay)
 
 
-# ==================================================
-# SINGLE FIFO DELIVERY WORKER
-# ==================================================
+            if success:
 
-def delivery_worker():
-    logging.info("Sequential FIFO delivery worker started.")
-
-    while True:
-        study_id = report_queue.get()
-        attempt = 0
-
-        # Keep the current study at the head of processing until it is
-        # delivered. The listener can continue adding new studies meanwhile.
-        while True:
-            attempt += 1
-            try:
                 logging.info(
-                    "Processing FIFO report: %s | Processing attempt %s",
-                    study_id,
-                    attempt,
+                    "Previously failed payload "
+                    "delivered successfully."
                 )
-                payload = fetch_study_payload(study_id)
-                logging.info("Report payload for %s: %s", study_id, json.dumps(payload))
-                send_to_portal(study_id, payload)
-                logging.info("Completed delivery: %s", study_id)
-                break
-            except Exception:
-                delay = min(2 ** (attempt - 1), 30)
-                logging.exception(
-                    "Could not prepare/deliver study %s. Retrying this same "
-                    "study in %s seconds; later queue items will wait.",
-                    study_id,
-                    delay,
-                )
-                time.sleep(delay)
 
-        with queue_lock:
-            queued_studies.discard(study_id)
-        report_queue.task_done()
+
+            else:
+
+                logging.warning(
+                    "Retry failed. "
+                    "Keeping payload in retry queue."
+                )
+
+
+                retry_queue.put(
+                    payload
+                )
+
+
+        except Exception:
+
+            logging.exception(
+                "Unexpected error while retrying payload."
+            )
+
+
+            # Put it back into the queue
+            retry_queue.put(
+                payload
+            )
+
+
+        finally:
+
+            retry_queue.task_done()
+
+
+    logging.info(
+        "Finished retry cycle. "
+        "Remaining retry queue size: %s",
+        retry_queue.qsize()
+    )
 
 
 # ==================================================
-# ENQUEUE REPORT
+# ENQUEUE NEW SUCCESSFUL STUDY
 # ==================================================
 
 def enqueue_report(study_id):
+
+    """
+    Add a newly successful study to the NEW STUDY queue.
+
+    The study ID is used here only because we still
+    need it to fetch the payload from PostgreSQL.
+
+    It is NOT stored in the failed retry queue.
+    """
 
     with queue_lock:
 
         if study_id in queued_studies:
 
             logging.info(
-                "Study %s already queued. Skipping duplicate.",
+                "Study %s already waiting for processing. "
+                "Skipping duplicate notification.",
                 study_id
             )
 
             return
 
-        queued_studies.add(study_id)
-        report_queue.put(study_id)
+
+        queued_studies.add(
+            study_id
+        )
+
+
+    report_queue.put(
+        study_id
+    )
+
 
     logging.info(
-        "Study %s added to FIFO queue. Queue size: %s",
+        "New successful study %s added to processing queue. "
+        "Queue size: %s",
         study_id,
         report_queue.qsize()
     )
+
+
+# ==================================================
+# PROCESS NEW STUDY
+# ==================================================
+
+def process_new_study(study_id):
+
+    """
+    Process one NEW successful study.
+
+    Flow:
+
+        Study SUCCESS
+              ↓
+        Fetch payload
+              ↓
+        Send to portal
+          /           \
+       SUCCESS       FAIL
+         ↓             ↓
+       DONE       Retry Queue
+    """
+
+    logging.info(
+        "Processing new successful study: %s",
+        study_id
+    )
+
+
+    try:
+
+        # ------------------------------------------
+        # Fetch payload from database
+        # ------------------------------------------
+
+        payload = fetch_study_payload(
+            study_id
+        )
+
+
+        logging.info(
+            "Payload fetched for study %s: %s",
+            study_id,
+            json.dumps(payload)
+        )
+
+
+        # ------------------------------------------
+        # Immediate portal attempt
+        # ------------------------------------------
+
+        success = send_to_portal(
+            payload
+        )
+
+
+        # ------------------------------------------
+        # SUCCESS
+        # ------------------------------------------
+
+        if success:
+
+            logging.info(
+                "New study %s delivered successfully.",
+                study_id
+            )
+
+
+            # Since a NEW study was successfully delivered,
+            # now attempt previously failed payloads.
+
+            retry_failed_payloads()
+
+
+        # ------------------------------------------
+        # FAILURE
+        # ------------------------------------------
+
+        else:
+
+            logging.warning(
+                "New study %s failed portal delivery. "
+                "Saving payload in retry queue.",
+                study_id
+            )
+
+
+            enqueue_failed_payload(
+                payload
+            )
+
+
+    except Exception:
+
+        logging.exception(
+            "Failed to prepare/process new study %s.",
+            study_id
+        )
+
+
+# ==================================================
+# SINGLE DELIVERY WORKER
+# ==================================================
+
+def delivery_worker():
+
+    """
+    Main delivery worker.
+
+    IMPORTANT:
+
+    A failed NEW study does NOT block later studies.
+
+    Example:
+
+        A → FAIL → retry queue
+
+        B → SUCCESS → portal
+
+        retry A
+
+    """
+
+    logging.info(
+        "Non-blocking delivery worker started."
+    )
+
+
+    while True:
+
+        # Wait for a NEW successful study
+
+        study_id = report_queue.get()
+
+
+        try:
+
+            process_new_study(
+                study_id
+            )
+
+
+        except Exception:
+
+            logging.exception(
+                "Unexpected worker error for study %s.",
+                study_id
+            )
+
+
+        finally:
+
+            with queue_lock:
+
+                queued_studies.discard(
+                    study_id
+                )
+
+
+            report_queue.task_done()
 
 
 # ==================================================
@@ -404,16 +795,36 @@ def enqueue_report(study_id):
 
 def listen_for_reports():
 
+    """
+    Continuously listen for PostgreSQL NOTIFY events.
+
+    When a study becomes SUCCESS:
+
+        PostgreSQL
+             ↓
+        NOTIFY
+             ↓
+        Listener
+             ↓
+        New study queue
+    """
+
     conn = get_connection()
 
     conn.autocommit = True
 
+
     with conn.cursor() as cur:
-        cur.execute(f"LISTEN {CHANNEL};")
+
+        cur.execute(
+            f"LISTEN {CHANNEL};"
+        )
+
 
     logging.info(
         "Listening for successful report notifications."
     )
+
 
     try:
 
@@ -426,22 +837,34 @@ def listen_for_reports():
                 1
             )
 
+
             if readable:
 
                 conn.poll()
 
+
                 while conn.notifies:
 
-                    notification = conn.notifies.pop(0)
+                    notification = (
+                        conn.notifies.pop(0)
+                    )
 
-                    study_id = notification.payload
+
+                    study_id = (
+                        notification.payload
+                    )
+
 
                     logging.info(
-                        "New successful report received: %s",
+                        "New successful study notification received: %s",
                         study_id
                     )
 
-                    enqueue_report(study_id)
+
+                    enqueue_report(
+                        study_id
+                    )
+
 
     finally:
 
@@ -454,28 +877,61 @@ def listen_for_reports():
 
 def main():
 
-    if not DATABASE_URL or not PORTAL_URL or not PORTAL_TOKEN:
+    # ----------------------------------------------
+    # Validate configuration
+    # ----------------------------------------------
+
+    if (
+        not DATABASE_URL
+        or not PORTAL_URL
+        or not PORTAL_TOKEN
+    ):
 
         raise RuntimeError(
             "Missing required .env configuration."
         )
 
+
+    # ----------------------------------------------
+    # Initialize PostgreSQL trigger
+    # ----------------------------------------------
+
     initialize_database()
 
-    # Dedicated single delivery thread
+
+    # ----------------------------------------------
+    # Start delivery worker
+    # ----------------------------------------------
+
     worker = threading.Thread(
+
         target=delivery_worker,
-        daemon=True
+
+        daemon=True,
+
+        name="PortalDeliveryWorker"
     )
+
 
     worker.start()
 
-    # Main thread continuously listens for new reports
+
+    logging.info(
+        "Portal delivery service started."
+    )
+
+
+    # ----------------------------------------------
+    # Main thread listens for PostgreSQL events
+    # ----------------------------------------------
+
     listen_for_reports()
 
+
+# ==================================================
+# APPLICATION ENTRY POINT
+# ==================================================
 
 if __name__ == "__main__":
 
     main()
-
-
