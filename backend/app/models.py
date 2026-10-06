@@ -21,39 +21,6 @@ class ApiKey(Base):
     key_name = Column(String, unique=True, nullable=False)
     api_key = Column(String, nullable=False)
 
-class DatabaseConfig(Base):
-    __tablename__ = "database_configs"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(100), nullable=False)
-    host = Column(String(255), nullable=False)
-    port = Column(Integer, default=5432)
-    database_name = Column(String(100), nullable=False)
-    username = Column(String(100), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-class SourceInstance(Base):
-    __tablename__ = "source_instances"
-
-    id = Column(Integer, primary_key=True, index=True)
-
-    instance_code = Column(String(50), unique=True, nullable=False, index=True)
-    name = Column(String(100), nullable=False)
-
-    status = Column(String(30), default="OFFLINE")
-
-    last_heartbeat = Column(DateTime(timezone=True), nullable=True)
-
-    total_synced = Column(Integer, default=0)
-    total_failed = Column(Integer, default=0)
-
-    api_key = Column(String(255), unique=True, nullable=False)
-
-    created_at = Column(
-        DateTime(timezone=True),
-        server_default=func.now()
-    )
-
 class SyncRecord(Base):
     __tablename__ = "sync_records"
 

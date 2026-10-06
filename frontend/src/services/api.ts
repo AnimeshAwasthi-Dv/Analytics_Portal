@@ -418,3 +418,20 @@ export const api = {
     }
   },
 };
+
+
+async getDashboard() {
+  const response = await fetch(
+    "http://127.0.0.1:8000/dashboard",
+    {
+      method: "GET",
+      credentials: "include",
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error("Failed to load dashboard");
+  }
+
+  return response.json();
+}
