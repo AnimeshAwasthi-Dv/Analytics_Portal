@@ -60,10 +60,10 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   useEffect(() => {
     loadDashboard();
 
-    // Automatically refresh every 6 seconds
+    // Automatically refresh every  1 min seconds
     const timer = setInterval(() => {
       loadDashboard();
-    }, 6000);
+    }, 60000);
 
     return () => clearInterval(timer);
   }, []);
@@ -550,65 +550,92 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         </div>
 
         <section id="sync-data" className="dashboard-recent-section space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
-              Recent synchronized data
-            </h2>
-            <span className="text-xs text-slate-400">
-              {dashboard?.recentRecords.length ?? 0} most recent records
-            </span>
-          </div>
+  <div className="flex flex-wrap items-center justify-between gap-2">
+    <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+      Recent synchronized data
+    </h2>
 
-          <div className="dashboard-table-shell overflow-x-auto rounded-xl border border-slate-200 bg-white">
-            <table className="dashboard-table w-full min-w-[850px] text-left text-xs">
-              <thead className="border-b border-slate-200 bg-slate-50 text-slate-500">
-                <tr>
-                  <th className="px-4 py-3 font-semibold">Record</th>
-                  <th className="px-4 py-3 font-semibold">Instance</th>
-                  <th className="px-4 py-3 font-semibold">Modality</th>
-                  <th className="px-4 py-3 font-semibold">Processing started</th>
-                  <th className="px-4 py-3 font-semibold">Processing completed</th>
-                  <th className="px-4 py-3 font-semibold">Credits</th>
-                  <th className="px-4 py-3 font-semibold">Status</th>
-                  <th className="px-4 py-3 font-semibold">Saved at</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {dashboard?.recentRecords.map((record) => (
-                  <tr key={record.id} className="text-slate-700">
-                    <td className="px-4 py-3 font-mono">{record.id}</td>
-                    <td className="px-4 py-3">{record.instanceCode}</td>
-                    <td className="px-4 py-3 font-semibold">{record.modality ?? "-"}</td>
-                    <td className="px-4 py-3">{formatDateTime(record.processingCreatedAt)}</td>
-                    <td className="px-4 py-3">{formatDateTime(record.processingCompletedAt)}</td>
-                    <td className="px-4 py-3">{formatNumber(record.creditsUsed)}</td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`sync-status ${
-                          record.syncStatus?.toUpperCase() === "SYNCED"
-                            ? "is-synced"
-                            : record.syncStatus?.toUpperCase() === "FAILED"
-                            ? "is-failed"
-                            : "is-other"
-                        }`}
-                      >
-                        {record.syncStatus ?? "-"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">{formatDateTime(record.syncedAt)}</td>
-                  </tr>
-                ))}
-                {!dashboard?.recentRecords.length && (
-                  <tr>
-                    <td className="px-4 py-8 text-center text-slate-400" colSpan={8}>
-                      No synchronized records have been saved.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
+    <span className="text-xs text-slate-400">
+      {dashboard?.recentRecords?.length ?? 0} most recent records
+    </span>
+  </div>
+
+  <div className="dashboard-table-shell overflow-x-auto rounded-xl border border-slate-200 bg-white">
+    <table className="dashboard-table w-full min-w-[850px] text-left text-xs">
+      <thead className="border-b border-slate-200 bg-slate-50 text-slate-500">
+        <tr>
+          <th className="px-4 py-3 font-semibold">Record</th>
+          <th className="px-4 py-3 font-semibold">Instance</th>
+          <th className="px-4 py-3 font-semibold">Modality</th>
+          <th className="px-4 py-3 font-semibold">Processing started</th>
+          <th className="px-4 py-3 font-semibold">Processing completed</th>
+          <th className="px-4 py-3 font-semibold">Credits</th>
+          <th className="px-4 py-3 font-semibold">Status</th>
+          <th className="px-4 py-3 font-semibold">Saved at</th>
+        </tr>
+      </thead>
+
+      <tbody className="divide-y divide-slate-100">
+        {(dashboard?.recentRecords ?? []).map((record) => (
+          <tr key={record.id} className="text-slate-700">
+            <td className="px-4 py-3 font-mono">
+              {record.id}
+            </td>
+
+            <td className="px-4 py-3">
+              {record.instanceCode}
+            </td>
+
+            <td className="px-4 py-3 font-semibold">
+              {record.modality ?? "-"}
+            </td>
+
+            <td className="px-4 py-3">
+              {formatDateTime(record.processingCreatedAt)}
+            </td>
+
+            <td className="px-4 py-3">
+              {formatDateTime(record.processingCompletedAt)}
+            </td>
+
+            <td className="px-4 py-3">
+              {formatNumber(record.creditsUsed)}
+            </td>
+
+            <td className="px-4 py-3">
+              <span
+                className={`sync-status ${
+                  record.syncStatus?.toUpperCase() === "SYNCED"
+                    ? "is-synced"
+                    : record.syncStatus?.toUpperCase() === "FAILED"
+                    ? "is-failed"
+                    : "is-other"
+                }`}
+              >
+                {record.syncStatus ?? "-"}
+              </span>
+            </td>
+
+            <td className="px-4 py-3">
+              {formatDateTime(record.syncedAt)}
+            </td>
+          </tr>
+        ))}
+
+        {!(dashboard?.recentRecords?.length ?? 0) && (
+          <tr>
+            <td
+              className="px-4 py-8 text-center text-slate-400"
+              colSpan={8}
+            >
+              No synchronized records have been saved.
+            </td>
+          </tr>
+        )}
+      </tbody>
+    </table>
+  </div>
+</section>
       </div>
     </div>
   );

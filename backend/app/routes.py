@@ -411,64 +411,44 @@ def receive_sync(
     db: Session = Depends(get_db),
     authenticated_key: ApiKey = Depends(verify_api_key)
 ):
-    """
-    Receive synchronization data from a source instance.
-
-    Authentication:
-        Authorization: Bearer <API_KEY>
-
-    Payload:
-    {
-        "modality": "XR",
-        "processing_created_at": "2026-10-03T10:20:00",
-        "processing_completed_at": "2026-10-03T10:24:00",
-        "credits_used": 4
-    }
-    """
-
-    # --------------------------------------------------------
-    # Determine source instance
-    # --------------------------------------------------------
-
+    # API key identifies the source instance
     instance_code = authenticated_key.key_name
 
-    # --------------------------------------------------------
-    # Create sync record
-    # --------------------------------------------------------
-
-    for _ in range(data.credits_used):
-        record = SyncRecord(
-            instance_code=instance_code,
-            modality=data.modality,
-            processing_created_at=data.processing_created_at,
-            processing_completed_at=data.processing_completed_at,
-            credits_used=1,
-            sync_status="SYNCED"
-        )
-
-        db.add(record)
-
-
-    # --------------------------------------------------------
-    # Create success log
-    # --------------------------------------------------------
-
-    log = SyncLog(
-        instance_code=instance_code,
-        event_type="SYNC",
-        status="SUCCESS",
-        message="Data received successfully"
-    )
-
-    db.add(log)
-
-    # --------------------------------------------------------
-    # Save both records
-    # --------------------------------------------------------
+    last_record = None
 
     try:
+        for _ in range(data.credits_used):
+            record = SyncRecord(
+                instance_code=instance_code,
+                modality=data.modality,
+                processing_created_at=data.processing_created_at,
+                processing_completed_at=data.processing_completed_at,
+                credits_used=1,
+                sync_status="SYNCED"
+            )
+
+            db.add(record)
+            last_record = record
+
+        log = SyncLog(
+            instance_code=instance_code,
+            event_type="SYNC",
+            status="SUCCESS",
+            message="Data received successfully"
+        )
+
+        db.add(log)
         db.commit()
-        db.refresh(record)
+
+        if last_record:
+            db.refresh(last_record)
+
+        return {
+            "success": True,
+            "message": "Data synchronized successfully",
+            "instance_code": instance_code,
+            "record_id": last_record.id if last_record else None
+        }
 
     except Exception:
         db.rollback()
@@ -488,17 +468,7 @@ def receive_sync(
             detail="Failed to synchronize data"
         )
 
-    # --------------------------------------------------------
-    # Response
-    # --------------------------------------------------------
-
-    return {
-        "success": True,
-        "message": "Data synchronized successfully",
-        "record_id": record.id
-    }
-
-
+    
 # ============================================================
 # HEARTBEAT API
 # ============================================================

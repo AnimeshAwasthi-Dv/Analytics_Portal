@@ -1,425 +1,304 @@
-# Central Sync Portal — Installation Guide
+from pathlib import Path
 
-This guide starts from a fresh clone and covers **Python setup → virtual environment → dependencies → `.env` → Alembic → database migration → admin/API-key seeding → running the FastAPI server → testing the API**.
+readme = r"""# Central Data Synchronization Portal
 
-## 1. Clone the repository
+A centralized portal for receiving synchronization data from multiple EC2/database instances, storing it in PostgreSQL, and displaying synchronization and QC information through a React dashboard.
 
-```bash
-git clone <YOUR_REPOSITORY_URL>
-cd CDS/backend
-```
-
-If you already cloned the repository:
-
-```bash
-cd D:\CDS\backend
-```
-
----
-
-# 2. Check Python
-
-The project uses Python.
-
-Check:
-
-```bash
-python --version
-```
-
-Recommended:
+## Architecture
 
 ```text
-Python 3.12.x
+EC2 Sync Scripts / Database Instances
+                |
+                |  API Key authenticated
+                v
+        FastAPI Backend
+                |
+                v
+          PostgreSQL
+                |
+                v
+        React Dashboard
 ```
 
-If `python` doesn't work on Windows, try:
+## Tech Stack
 
-```bash
-py --version
+### Backend
+- Python
+- FastAPI
+- SQLAlchemy
+- Alembic
+- PostgreSQL
+- JWT authentication
+- HTTP-only cookies for authentication
+
+### Frontend
+- React
+- TypeScript
+- Vite
+- React Router
+- Lucide React
+
+---
+
+# Project Structure
+
+```text
+CDS/
+│
+├── backend/
+│   ├── app/
+│   │   ├── auth.py
+│   │   ├── database.py
+│   │   ├── main.py
+│   │   ├── models.py
+│   │   ├── routes.py
+│   │   └── seed.py
+│   │
+│   ├── alembic/
+│   │   ├── versions/
+│   │   │   └── ed608f36b583_initial_postgres_schema.py
+│   │   └── ...
+│   │
+│   ├── alembic.ini
+│   ├── requirements.txt
+│   ├── .env
+│   └── ...
+│
+└── frontend/
+    ├── src/
+    ├── package.json
+    └── ...
 ```
 
 ---
 
-# 3. Create a virtual environment
+# Prerequisites
 
-From the `backend` directory:
+Install the following before starting:
+
+- Python 3.10+
+- Node.js and npm
+- PostgreSQL 18
+- Git
+
+For Windows, PostgreSQL can be downloaded from:
+
+https://www.postgresql.org/download/windows/
+
+The PostgreSQL Windows installer can also install pgAdmin 4.
+
+---
+
+# 1. Clone the Repository
 
 ```bash
-python -m venv venv
+git clone <REPOSITORY_URL>
+cd CDS
 ```
 
-Activate it in **Git Bash**:
+---
 
-```bash
-source venv/Scripts/activate
+# 2. PostgreSQL Setup
+
+PostgreSQL is required for the backend.
+
+## Create the Database User
+
+Open `psql` or pgAdmin and connect as a PostgreSQL administrator.
+
+Run:
+
+```sql
+CREATE USER central_sync WITH PASSWORD 'YOUR_DATABASE_PASSWORD';
 ```
 
-Or in **PowerShell**:
+Create the database:
+
+```sql
+CREATE DATABASE central_sync OWNER central_sync;
+```
+
+Connect to the newly created `central_sync` database and run:
+
+```sql
+GRANT ALL ON SCHEMA public TO central_sync;
+```
+
+You can verify the connection with:
 
 ```powershell
-.\venv\Scripts\Activate.ps1
+& "C:\Program Files\PostgreSQL\18\bin\psql.exe" -U central_sync -h localhost -d central_sync
 ```
 
-You should see:
+Enter the password created above when prompted.
 
-```text
-(venv)
-```
-
-at the beginning of your terminal.
+> If PostgreSQL was installed in a different location, update the `psql.exe` path accordingly.
 
 ---
 
-# 4. Upgrade pip
+# 3. Backend Setup
 
-```bash
-python -m pip install --upgrade pip
+Open a terminal inside the backend directory:
+
+```powershell
+cd backend
 ```
 
----
+Create a Python virtual environment:
 
-# 5. Install project dependencies
-
-The repository contains:
-
-```text
-requirements.txt
+```powershell
+python -m venv .venv
 ```
 
-with:
+Activate it:
 
-```txt
-fastapi
-uvicorn[standard]
-sqlalchemy
-psycopg[binary]
-python-dotenv
-python-jose[cryptography]
-pwdlib[argon2]
-pydantic[email]
-alembic==1.20.0
+```powershell
+.\.venv\Scripts\Activate.ps1
 ```
 
-Install everything:
+Install dependencies:
 
-```bash
+```powershell
 pip install -r requirements.txt
 ```
 
-Verify Alembic:
-
-```bash
-python -m alembic --version
-```
-
-Expected:
-
-```text
-alembic 1.20.0
-```
-
 ---
 
-# 6. Configure `.env`
+# 4. Configure Environment Variables
 
-Create:
+Create a file named:
 
 ```text
-D:\CDS\backend\.env
+backend/.env
 ```
 
-Example:
+Use the following structure:
 
 ```env
-DATABASE_URL=sqlite:///./central_sync.db
+DATABASE_URL=postgresql+psycopg2://central_sync:YOUR_DATABASE_PASSWORD@localhost:5432/central_sync
 
-JWT_SECRET=central_sync_portal_jwt_secret_key_9876543210
+JWT_SECRET=CHANGE_THIS_TO_A_RANDOM_SECRET
 JWT_ALGORITHM=HS256
 JWT_EXPIRATION=60
 
 INITIAL_ADMIN_EMAIL=admin@local.com
-INITIAL_ADMIN_PASSWORD=adminpassword123
+INITIAL_ADMIN_PASSWORD=CHANGE_THIS_PASSWORD
 
-MARENGO_API_KEY=your_marengo_api_key_here
+MARENGO_API_KEY=CHANGE_THIS_API_KEY
+PACS_API_KEY=CHANGE_THIS_API_KEY
+
+PORTAL_API_KEY_3=
+PORTAL_API_KEY_4=
+PORTAL_API_KEY_5=
 ```
 
 ### Important
 
 Do **not** commit `.env` to Git.
 
-Your `.gitignore` should contain:
+The `.env` file contains passwords, JWT secrets, and API keys.
 
-```gitignore
-.env
-venv/
-__pycache__/
-*.pyc
-*.db
+A safe `.env.example` should be committed instead:
+
+```env
+DATABASE_URL=postgresql+psycopg2://central_sync:YOUR_DATABASE_PASSWORD@localhost:5432/central_sync
+
+JWT_SECRET=CHANGE_ME
+JWT_ALGORITHM=HS256
+JWT_EXPIRATION=60
+
+INITIAL_ADMIN_EMAIL=admin@local.com
+INITIAL_ADMIN_PASSWORD=CHANGE_ME
+
+MARENGO_API_KEY=CHANGE_ME
+PACS_API_KEY=CHANGE_ME
+
+PORTAL_API_KEY_3=
+PORTAL_API_KEY_4=
+PORTAL_API_KEY_5=
 ```
 
 ---
 
-# 7. Check the project structure
+# 5. Run Database Migrations
 
-Your backend should look approximately like:
+The project uses Alembic to create and manage the PostgreSQL schema.
 
-```text
-backend/
-│
-├── app/
-│   ├── __init__.py
-│   ├── main.py
-│   ├── database.py
-│   ├── models.py
-│   ├── schemas.py
-│   ├── auth_api.py
-│   └── routes.py
-│
-├── migrations/
-│   ├── versions/
-│   ├── env.py
-│   └── script.py.mako
-│
-├── alembic.ini
-├── seed.py
-├── requirements.txt
-├── .env
-└── .gitignore
+From the `backend` directory:
+
+```powershell
+alembic upgrade head
 ```
 
----
+This creates the required tables.
 
-# 8. Configure Alembic
-
-Alembic needs to know about your SQLAlchemy models.
-
-The important part of `migrations/env.py` should load your `.env` and use your application's `Base`.
-
-For example:
-
-```python
-from logging.config import fileConfig
-import os
-import sys
-
-from sqlalchemy import engine_from_config, pool
-from alembic import context
-from dotenv import load_dotenv
-
-sys.path.insert(
-    0,
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-)
-
-load_dotenv()
-
-from app.database import Base
-from app import models
-
-config = context.config
-
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
-
-database_url = os.getenv("DATABASE_URL")
-
-if not database_url:
-    raise ValueError("DATABASE_URL is missing from .env")
-
-config.set_main_option(
-    "sqlalchemy.url",
-    database_url
-)
-
-target_metadata = Base.metadata
-
-
-def run_migrations_offline():
-    url = config.get_main_option("sqlalchemy.url")
-
-    context.configure(
-        url=url,
-        target_metadata=target_metadata,
-        literal_binds=True,
-        dialect_opts={"paramstyle": "named"}
-    )
-
-    with context.begin_transaction():
-        context.run_migrations()
-
-
-def run_migrations_online():
-    connectable = engine_from_config(
-        config.get_section(
-            config.config_ini_section,
-            {}
-        ),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
-
-    with connectable.connect() as connection:
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata
-        )
-
-        with context.begin_transaction():
-            context.run_migrations()
-
-
-if context.is_offline_mode():
-    run_migrations_offline()
-else:
-    run_migrations_online()
-```
-
----
-
-# 9. Create the migration
-
-If this is a **fresh installation** and migrations have not already been created in the repository:
-
-```bash
-python -m alembic revision --autogenerate -m "initial database schema"
-```
-
-This creates a migration under:
-
-```text
-migrations/versions/
-```
-
-Check:
-
-```bash
-python -m alembic history
-```
-
----
-
-# 10. Apply the database migration
-
-Run:
-
-```bash
-python -m alembic upgrade head
-```
-
-Expected output will look similar to:
-
-```text
-INFO  [alembic.runtime.migration] Running upgrade ...
-```
-
-This creates the database tables.
-
-For your current project, tables include:
+Current schema includes:
 
 ```text
 users
 api_keys
-database_configs
-source_instances
 sync_records
 sync_logs
+alembic_version
 ```
+
+You should not need to manually create these application tables.
 
 ---
 
-# 11. Verify the database tables
+# 6. Create the Initial Admin User and API Keys
 
 Run:
 
-```bash
-python -c "from sqlalchemy import inspect; from app.database import engine; print(inspect(engine).get_table_names())"
+```powershell
+python -m app.seed
 ```
 
-You should see something similar to:
+The seed script:
+
+- Creates the initial admin user.
+- Hashes the admin password before storing it.
+- Creates configured API-key records.
+- Skips API keys that are not configured in `.env`.
+- Does not recreate records that already exist.
+
+---
+
+# 7. Start the Backend
+
+From:
 
 ```text
-['alembic_version', 'api_keys', 'database_configs', 'source_instances', 'sync_logs', 'sync_records', 'users']
+CDS/backend
 ```
 
----
+run:
 
-# 12. Seed the database
-
-Your seed script creates the initial admin account and Marengo API key.
-
-Run:
-
-```bash
-python seed.py
-```
-
-Expected output:
-
-```text
-Admin account already exists: admin@local.com
-Marengo API key created successfully!
-```
-
-If it is a completely fresh database, you may instead see something indicating that the admin account was created.
-
----
-
-# 13. Verify the API key
-
-Run:
-
-```bash
-python -c "from app.database import SessionLocal; from app.models import ApiKey; db=SessionLocal(); print([(x.id,x.key_name,x.api_key[:4]+'****') for x in db.query(ApiKey).all()]); db.close()"
-```
-
-Expected:
-
-```text
-[(1, 'Marengo', 'sk_l****')]
-```
-
-This confirms the Marengo API key exists.
-
-**Do not print the complete API key in a shared terminal/screenshot.**
-
----
-
-# 14. Start FastAPI
-
-Run:
-
-```bash
+```powershell
 uvicorn app.main:app --reload
 ```
 
-Expected:
+The backend will normally be available at:
 
 ```text
-Uvicorn running on http://127.0.0.1:8000
+http://127.0.0.1:8000
 ```
 
-Your API is now running.
-
----
-
-# 15. Check the health endpoint
-
-Open:
+Health check:
 
 ```text
 http://127.0.0.1:8000/health
 ```
 
-Expected:
+Expected response:
 
 ```json
 {
-    "status": "healthy"
+  "status": "healthy"
 }
 ```
 
-You can also open Swagger:
+Swagger API documentation:
 
 ```text
 http://127.0.0.1:8000/docs
@@ -427,235 +306,443 @@ http://127.0.0.1:8000/docs
 
 ---
 
-# 16. Test the Sync API using Postman
+# 8. Frontend Setup
 
-### Method
+Open a second terminal.
+
+Move to the frontend directory:
+
+```powershell
+cd frontend
+```
+
+Install dependencies:
+
+```powershell
+npm install
+```
+
+Start the development server:
+
+```powershell
+npm run dev
+```
+
+Vite will display the local frontend URL in the terminal, normally:
 
 ```text
-POST
-```
-
-### URL
-
-```text
-http://127.0.0.1:8000/api/v1/sync
-```
-
-### Authorization
-
-Postman:
-
-```text
-Authorization
-    Type: Bearer Token
-    Token: <your Marengo API key>
-```
-
-### Body
-
-Select:
-
-```text
-Body → raw → JSON
-```
-
-Use:
-
-```json
-{
-    "modality": "XR",
-    "processing_created_at": "2026-10-03T10:20:00",
-    "processing_completed_at": "2026-10-03T10:24:00",
-    "credits_used": 4
-}
-```
-
-Click **Send**.
-
-Expected:
-
-```json
-{
-    "success": true,
-    "message": "Data synchronized successfully",
-    "record_id": 1
-}
+http://localhost:5173
 ```
 
 ---
 
-# 17. Verify the data was saved
+# 9. Authentication
 
-Check the number of records:
+The portal uses JWT authentication.
 
-```bash
-python -c "from app.database import SessionLocal; from app.models import SyncRecord; db=SessionLocal(); print(db.query(SyncRecord).count()); db.close()"
+The JWT is stored in a:
+
+```text
+Secure HTTP-only cookie
 ```
+
+The token is not stored in:
+
+```text
+localStorage
+sessionStorage
+```
+
+Authentication endpoints:
+
+```text
+POST /auth/login
+POST /auth/logout
+GET  /auth/me
+```
+
+The frontend should use the login endpoint and allow the browser to manage the HTTP-only authentication cookie.
+
+---
+
+# 10. Sync API
+
+EC2 sync scripts send synchronization data to:
+
+```text
+POST /api/v1/sync
+```
+
+The endpoint uses API-key authentication.
+
+The API key must match one of the configured keys in the `api_keys` table.
+
+The API identifies the sending instance from the matching API-key configuration.
 
 For example:
 
 ```text
-1
-```
-
-means one `SyncRecord` exists.
-
-To see the actual records:
-
-```bash
-python -c "from app.database import SessionLocal; from app.models import SyncRecord; db=SessionLocal(); print([(x.id,x.instance_code,x.modality,x.credits_used,x.sync_status) for x in db.query(SyncRecord).all()]); db.close()"
-```
-
-Example:
-
-```text
-[(1, 'Marengo', 'XR', 4, 'SYNCED')]
-```
-
----
-
-# 18. Verify the sync logs
-
-```bash
-python -c "from app.database import SessionLocal; from app.models import SyncLog; db=SessionLocal(); print([(x.id,x.instance_code,x.event_type,x.status,x.message) for x in db.query(SyncLog).all()]); db.close()"
-```
-
-Expected:
-
-```text
-[(1, 'Marengo', 'SYNC', 'SUCCESS', 'Data received successfully')]
-```
-
----
-
-# 19. Test invalid API key
-
-In Postman, change the Bearer token to:
-
-```text
-wrong_key
-```
-
-Send the request again.
-
-Expected:
-
-```text
-401 Unauthorized
-```
-
-with:
-
-```json
-{
-    "detail": "Invalid API key"
-}
-```
-
-This confirms that API authentication is working.
-
----
-
-# 20. Clear test data
-
-If you want to remove the test synchronization records:
-
-```bash
-python -c "from app.database import SessionLocal; from app.models import SyncRecord, SyncLog; db=SessionLocal(); db.query(SyncRecord).delete(); db.query(SyncLog).delete(); db.commit(); db.close(); print('sync_records and sync_logs cleared')"
-```
-
-This **does not remove** your admin account or API key.
-
----
-
-# Complete installation flow
-
-For a developer setting up the project from scratch, the main sequence is:
-
-```text
-Clone repository
-       ↓
-cd backend
-       ↓
-Create venv
-       ↓
-Activate venv
-       ↓
-pip install -r requirements.txt
-       ↓
-Create .env
-       ↓
-Configure DATABASE_URL
-       ↓
-Alembic installed
-       ↓
-alembic upgrade head
-       ↓
-Database tables created
-       ↓
-python seed.py
-       ↓
-Admin + Marengo API key created
-       ↓
-uvicorn app.main:app --reload
-       ↓
-Postman
-       ↓
+EC2 Instance
+     |
+     | Authorization: Bearer <API_KEY>
+     v
 POST /api/v1/sync
-       ↓
-Bearer API key authentication
-       ↓
-SyncRecord + SyncLog
-       ↓
-Database
+     |
+     v
+FastAPI
+     |
+     v
+PostgreSQL
 ```
 
-### Quick setup commands
+The API stores synchronization records and creates a synchronization log.
 
-For someone who already has the repository and just wants the commands:
+---
 
-```bash
-cd D:\CDS\backend
+# 11. Dashboard API
+
+The dashboard retrieves centralized synchronization information through:
+
+```text
+GET /api/v1/dashboard
 ```
 
-```bash
-python -m venv venv
+The endpoint requires authentication.
+
+The dashboard can display information such as:
+
+- Total instances
+- Online instances
+- Records synchronized
+- Pending records
+- Synchronization activity
+- Instance-specific synchronization information
+
+---
+
+# 12. Database Management with pgAdmin
+
+pgAdmin can be used to inspect the PostgreSQL database.
+
+Connect using:
+
+```text
+Host: localhost
+Port: 5432
+Database: central_sync
+Username: central_sync
+Password: <your database password>
 ```
 
-```bash
-source venv/Scripts/activate
+After connecting:
+
+```text
+Servers
+└── PostgreSQL
+    └── Databases
+        └── central_sync
+            └── Schemas
+                └── public
+                    └── Tables
+                        ├── api_keys
+                        ├── sync_logs
+                        ├── sync_records
+                        └── users
 ```
 
-```bash
-python -m pip install --upgrade pip
+For security, avoid displaying API-key values unnecessarily.
+
+A safer query for inspecting configured keys is:
+
+```sql
+SELECT
+    id,
+    key_name,
+    length(api_key) AS key_length,
+    left(api_key, 6) AS key_prefix
+FROM api_keys;
 ```
 
-```bash
-pip install -r requirements.txt
+---
+
+# 13. Useful Development Commands
+
+## Check Alembic Version
+
+```powershell
+alembic current
 ```
 
-```bash
-python -m alembic upgrade head
+## Check Migration Status
+
+```powershell
+alembic check
 ```
 
-```bash
-python seed.py
+## Apply Migrations
+
+```powershell
+alembic upgrade head
 ```
 
-```bash
+## Show Migration History
+
+```powershell
+alembic history
+```
+
+## Start Backend
+
+```powershell
 uvicorn app.main:app --reload
 ```
 
-Then test:
+## Start Frontend
+
+```powershell
+npm run dev
+```
+
+---
+
+# 14. Fresh Setup
+
+For a new developer setting up the project from scratch, the normal sequence is:
 
 ```text
-http://127.0.0.1:8000/docs
+1. Install Git
+        ↓
+2. Install Python
+        ↓
+3. Install Node.js
+        ↓
+4. Install PostgreSQL
+        ↓
+5. Clone repository
+        ↓
+6. Create PostgreSQL user/database
+        ↓
+7. Create backend/.env
+        ↓
+8. Create Python virtual environment
+        ↓
+9. pip install -r requirements.txt
+        ↓
+10. alembic upgrade head
+        ↓
+11. python -m app.seed
+        ↓
+12. Start FastAPI
+        ↓
+13. npm install
+        ↓
+14. Start React frontend
 ```
 
-**One important distinction:** `alembic revision --autogenerate` is normally used by the **developer when changing the database schema**. A new developer setting up the project from Git should generally only run:
+---
 
-```bash
-python -m alembic upgrade head
+# 15. Git and Environment Files
+
+The following files should **not** be committed:
+
+```text
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+central_sync.db
 ```
 
-because the migration files should already be committed to Git.
+Recommended `.gitignore` entries:
+
+```gitignore
+# Environment
+.env
+.env.*
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Local database
+central_sync.db
+
+# Node
+node_modules/
+
+# Build output
+dist/
+build/
+```
+
+If `.env.example` is used, explicitly allow it:
+
+```gitignore
+.env
+.env.*
+!.env.example
+```
+
+---
+
+# 16. Important Security Notes
+
+Never commit:
+
+- PostgreSQL passwords
+- JWT secrets
+- API keys
+- Production credentials
+- Personal access tokens
+
+Use different credentials for:
+
+```text
+Development
+Testing
+Production
+```
+
+If an API key or password is accidentally committed or exposed, rotate it immediately.
+
+---
+
+# 17. Database Migration Policy
+
+Alembic is the source of truth for the database schema.
+
+When changing SQLAlchemy models:
+
+1. Update the model.
+2. Generate an Alembic migration.
+3. Review the generated migration.
+4. Commit the migration file.
+5. Run:
+
+```powershell
+alembic upgrade head
+```
+
+Do not rely on:
+
+```python
+Base.metadata.create_all(bind=engine)
+```
+
+for production schema management.
+
+---
+
+# 18. Troubleshooting
+
+## PostgreSQL connection failed
+
+Check that PostgreSQL is running.
+
+On Windows:
+
+```powershell
+Get-Service postgresql-x64-18
+```
+
+Start it if necessary:
+
+```powershell
+Start-Service postgresql-x64-18
+```
+
+---
+
+## Database authentication failed
+
+Verify:
+
+- PostgreSQL is running.
+- Database name is correct.
+- Username is `central_sync`.
+- Password matches the `.env`.
+- Port is `5432`.
+- `DATABASE_URL` is correct.
+
+---
+
+## Alembic cannot connect
+
+Check:
+
+```env
+DATABASE_URL=postgresql+psycopg2://central_sync:YOUR_DATABASE_PASSWORD@localhost:5432/central_sync
+```
+
+Then run:
+
+```powershell
+alembic current
+```
+
+---
+
+## API returns `Not authenticated`
+
+For protected endpoints, first log in through:
+
+```text
+POST /auth/login
+```
+
+The authentication cookie must then be sent with subsequent requests.
+
+---
+
+## API returns `Invalid API key`
+
+Check that the API key:
+
+1. Exists in `.env`.
+2. Was inserted into the `api_keys` table by the seed script.
+3. Is being sent using the expected Authorization header.
+4. Matches the stored API key.
+
+---
+
+# 19. Development URLs
+
+| Service | URL |
+|---|---|
+| Frontend | `http://localhost:5173` |
+| Backend | `http://127.0.0.1:8000` |
+| Swagger | `http://127.0.0.1:8000/docs` |
+| Health | `http://127.0.0.1:8000/health` |
+| PostgreSQL | `localhost:5432` |
+
+---
+
+# 20. Summary
+
+The project consists of:
+
+```text
+React + Vite
+      |
+      v
+FastAPI
+      |
+      v
+SQLAlchemy
+      |
+      v
+PostgreSQL
+```
+
+Alembic manages the database schema, the seed script creates the initial admin/API-key configuration, and the EC2 sync clients communicate with the backend using API-key authentication.
+
+For a new developer, PostgreSQL must be installed separately on the machine. Git only provides the project source code; it does not install PostgreSQL automatically.
+"""
+
+path = Path("/mnt/data/README.md")
+path.write_text(readme, encoding="utf-8")
+
+print(f"Created: {path}")
