@@ -2,26 +2,63 @@ export interface DashboardKPIs {
   totalInstances: number;
   onlineInstances: number;
   recordsSynced: number;
-  recordsPending: number;
   failedSyncs: number;
-  successRate: number;
-  apiStatus: string;
-  avgResponseTime: string;
+  totalCredits: number;
+  modalityCount: number;
 }
 
 export interface DatabaseInstance {
   id: string;
   name: string;
   status: string;
-  lastSyncTime: string;
-  lastSyncTimestamp: string | null;
+  lastSyncTime: string | null;
   recordsSynced: number;
-  recordsPending: number;
   failedSyncs: number;
   successRate: number;
+  modalities: string[];
+}
+
+export interface SyncRecord {
+  id: number;
+  instanceCode: string;
+  modality: string | null;
+  processingCreatedAt: string | null;
+  processingCompletedAt: string | null;
+  creditsUsed: number;
+  syncStatus: string | null;
+  syncedAt: string | null;
+}
+
+export interface AnalyticsResponse {
+  summary: {
+    totalRecords: number;
+    totalCredits: number;
+    totalModalities: number;
+    sourceInstances: number;
+  };
+  byModality: Array<{
+    modality: string;
+    records: number;
+    credits: number;
+  }>;
+  daily: Array<{
+    date: string;
+    modality: string;
+    records: number;
+    credits: number;
+  }>;
+  byInstance: Array<{
+    instanceCode: string;
+    modality: string;
+    records: number;
+    credits: number;
+  }>;
+  lastUpdated: string;
 }
 
 export interface DashboardResponse {
   kpis: DashboardKPIs;
   instances: DatabaseInstance[];
+  recentRecords: SyncRecord[];
+  lastUpdated: string;
 }

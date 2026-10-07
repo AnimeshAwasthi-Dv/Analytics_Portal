@@ -3,6 +3,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.auth_api import verify_api_key
 
@@ -26,6 +27,27 @@ from app.auth import (
 
 
 router = APIRouter()
+
+
+def serialize_sync_record(record: SyncRecord):
+    return {
+        "id": record.id,
+        "instanceCode": record.instance_code,
+        "modality": record.modality,
+        "processingCreatedAt": (
+            record.processing_created_at.isoformat()
+            if record.processing_created_at
+            else None
+        ),
+        "processingCompletedAt": (
+            record.processing_completed_at.isoformat()
+            if record.processing_completed_at
+            else None
+        ),
+        "creditsUsed": record.credits_used or 0,
+        "syncStatus": record.sync_status,
+        "syncedAt": record.synced_at.isoformat() if record.synced_at else None,
+    }
 
 
 
@@ -226,9 +248,13 @@ def get_dashboard(
                     else None
                 ),
                 "recordsSynced": len(synced_records),
-                "recordsPending": None,
                 "successRate": success_rate,
                 "failedSyncs": failed_syncs,
+                "modalities": sorted({
+                    record.modality
+                    for record in instance_records
+                    if record.modality
+                }),
             }
         )
 
@@ -242,8 +268,9 @@ def get_dashboard(
     )
 
     total_records_synced = sum(
-        instance["recordsSynced"]
-        for instance in instances
+        1
+        for record in sync_records
+        if record.sync_status == "SYNCED"
     )
 
     total_failed_syncs = sum(
@@ -251,17 +278,126 @@ def get_dashboard(
         for instance in instances
     )
 
+    total_credits = sum(
+        record.credits_used or 0
+        for record in sync_records
+        if record.sync_status == "SYNCED"
+    )
+
+    modality_count = len({
+        record.modality
+        for record in sync_records
+        if record.modality
+    })
+
+    recent_records = (
+        db.query(SyncRecord)
+        .order_by(SyncRecord.synced_at.desc(), SyncRecord.id.desc())
+        .limit(50)
+        .all()
+    )
+
     return {
         "kpis": {
             "totalInstances": total_instances,
             "onlineInstances": online_instances,
             "recordsSynced": total_records_synced,
-            "recordsPending": None,
             "failedSyncs": total_failed_syncs,
-            "apiStatus": "ONLINE",
-            "avgResponseTime": None,
+            "totalCredits": total_credits,
+            "modalityCount": modality_count,
         },
         "instances": instances,
+        "recentRecords": [serialize_sync_record(record) for record in recent_records],
+        "lastUpdated": datetime.utcnow().isoformat(),
+    }
+
+
+@router.get("/api/v1/analytics")
+def get_analytics(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    total_records = db.query(func.count(SyncRecord.id)).scalar() or 0
+    total_credits = db.query(
+        func.coalesce(func.sum(SyncRecord.credits_used), 0)
+    ).scalar() or 0
+
+    modality_rows = (
+        db.query(
+            SyncRecord.modality,
+            func.count(SyncRecord.id),
+            func.coalesce(func.sum(SyncRecord.credits_used), 0),
+        )
+        .group_by(SyncRecord.modality)
+        .all()
+    )
+
+    daily_rows = (
+        db.query(
+            func.date(SyncRecord.processing_created_at),
+            SyncRecord.modality,
+            func.count(SyncRecord.id),
+            func.coalesce(func.sum(SyncRecord.credits_used), 0),
+        )
+        .filter(SyncRecord.processing_created_at.is_not(None))
+        .group_by(
+            func.date(SyncRecord.processing_created_at),
+            SyncRecord.modality,
+        )
+        .order_by(func.date(SyncRecord.processing_created_at))
+        .all()
+    )
+
+    instance_rows = (
+        db.query(
+            SyncRecord.instance_code,
+            SyncRecord.modality,
+            func.count(SyncRecord.id),
+            func.coalesce(func.sum(SyncRecord.credits_used), 0),
+        )
+        .group_by(SyncRecord.instance_code, SyncRecord.modality)
+        .order_by(SyncRecord.instance_code)
+        .all()
+    )
+
+    source_instances = db.query(
+        func.count(func.distinct(SyncRecord.instance_code))
+    ).scalar() or 0
+
+    return {
+        "summary": {
+            "totalRecords": total_records,
+            "totalCredits": total_credits,
+            "totalModalities": len(modality_rows),
+            "sourceInstances": source_instances,
+        },
+        "byModality": [
+            {
+                "modality": modality or "Not specified",
+                "records": records,
+                "credits": credits,
+            }
+            for modality, records, credits in modality_rows
+        ],
+        "daily": [
+            {
+                "date": day.isoformat() if hasattr(day, "isoformat") else str(day),
+                "modality": modality or "Not specified",
+                "records": records,
+                "credits": credits,
+            }
+            for day, modality, records, credits in daily_rows
+            if day is not None
+        ],
+        "byInstance": [
+            {
+                "instanceCode": instance_code,
+                "modality": modality or "Not specified",
+                "records": records,
+                "credits": credits,
+            }
+            for instance_code, modality, records, credits in instance_rows
+        ],
         "lastUpdated": datetime.utcnow().isoformat(),
     }
 

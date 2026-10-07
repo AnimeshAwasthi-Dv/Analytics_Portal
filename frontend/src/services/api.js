@@ -1,5 +1,7 @@
 
-const API = "http://localhost:8000";
+const API = import.meta.env.DEV
+  ? ""
+  : (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
 
 export async function apiRequest(endpoint, options = {}) {
   const response = await fetch(`${API}${endpoint}`, {

@@ -1,6 +1,14 @@
 import axios from "axios";
+import type { AnalyticsResponse, DashboardResponse } from "../types";
 
-const BASE_URL = "http://localhost:8000";
+export interface User {
+  id: number;
+  name: string;
+  email: string;
+}
+
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+const BASE_URL = import.meta.env.DEV ? "" : API_BASE_URL;
 
 export const axiosInstance = axios.create({
   baseURL: BASE_URL,
@@ -11,13 +19,13 @@ export const axiosInstance = axios.create({
 });
 
 export const api = {
-  async getCurrentUser() {
-    const response = await axiosInstance.get("/auth/me");
+  async getCurrentUser(): Promise<User> {
+    const response = await axiosInstance.get<User>("/auth/me");
     return response.data;
   },
 
-  async login(email: string, password: string) {
-    const response = await axiosInstance.post("/auth/login", {
+  async login(email: string, password: string): Promise<{ message: string; user: User }> {
+    const response = await axiosInstance.post<{ message: string; user: User }>("/auth/login", {
       email,
       password,
     });
@@ -29,9 +37,17 @@ export const api = {
     await axiosInstance.post("/auth/logout");
   },
 
-  async getDashboard() {
-    const response = await axiosInstance.get(
+  async getDashboard(): Promise<DashboardResponse> {
+    const response = await axiosInstance.get<DashboardResponse>(
       "/api/v1/dashboard"
+    );
+
+    return response.data;
+  },
+
+  async getAnalytics(): Promise<AnalyticsResponse> {
+    const response = await axiosInstance.get<AnalyticsResponse>(
+      "/api/v1/analytics"
     );
 
     return response.data;

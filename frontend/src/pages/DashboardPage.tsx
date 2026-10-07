@@ -1,43 +1,19 @@
 import React, { useEffect, useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 import {
   Database,
   CheckCircle2,
   RefreshCw,
-  Clock,
+  Coins,
   AlertOctagon,
-  Activity,
   Radio,
+  ScanLine,
   Zap,
   LogOut,
+  ChartNoAxesColumnIncreasing,
 } from "lucide-react";
 import { api } from "../services/api.ts";
-
-interface DashboardKPIs {
-  totalInstances: number;
-  onlineInstances: number;
-  recordsSynced: number;
-  recordsPending: number | null;
-  failedSyncs: number;
-  apiStatus: string;
-  avgResponseTime: string | null;
-}
-
-interface DashboardInstance {
-  id: string;
-  name: string;
-  status: "Online" | "Delayed" | "Offline";
-  lastSyncTime: string | null;
-  recordsSynced: number;
-  recordsPending: number | null;
-  successRate: number;
-  failedSyncs: number;
-}
-
-interface DashboardData {
-  kpis: DashboardKPIs;
-  instances: DashboardInstance[];
-  lastUpdated: string;
-}
+import type { DashboardResponse } from "../types";
 
 interface DashboardPageProps {
   user?: {
@@ -51,7 +27,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   user,
   onLogout,
 }) => {
-  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const location = useLocation();
+  const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -91,6 +68,16 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     return () => clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    if (location.hash !== "#sync-data") return;
+
+    const timer = window.setTimeout(() => {
+      document.getElementById("sync-data")?.scrollIntoView({ behavior: "smooth" });
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [location.hash, loading]);
+
   const formatNumber = (value: number | null | undefined) => {
     if (value === null || value === undefined) {
       return "—";
@@ -111,6 +98,13 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     }
 
     return date.toLocaleTimeString();
+  };
+
+  const formatDateTime = (value: string | null) => {
+    if (!value) return "-";
+
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
   };
 
   if (loading) {
@@ -171,11 +165,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   );
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <div className="max-w-7xl mx-auto p-6 space-y-6">
+    <div className="dashboard-page min-h-screen">
+      <div className="dashboard-content mx-auto">
 
         {/* HEADER */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+        <div className="dashboard-topbar rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
 
             <div className="flex items-center gap-3">
@@ -200,8 +194,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
-
+            <div className="dashboard-actions flex items-center gap-3">
               <div className="text-right">
                 <p className="text-[10px] text-slate-400">
                   Last Updated
@@ -215,7 +208,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               <button
                 onClick={() => loadDashboard(true)}
                 disabled={refreshing}
-                className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg disabled:opacity-60"
+                className="dashboard-action dashboard-refresh flex items-center gap-2 rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-60"
               >
                 <RefreshCw
                   className={`w-3.5 h-3.5 ${
@@ -226,10 +219,18 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 {refreshing ? "Refreshing..." : "Refresh"}
               </button>
 
+              <Link
+                to="/analytics"
+                className="dashboard-action dashboard-analytics flex items-center gap-2 rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200"
+              >
+                <ChartNoAxesColumnIncreasing className="h-4 w-4" />
+                Analytics
+              </Link>
+
               {onLogout && (
                 <button
                   onClick={onLogout}
-                  className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg"
+                  className="dashboard-action dashboard-logout flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-100"
                 >
                   <LogOut className="w-3.5 h-3.5" />
                   Logout
@@ -250,7 +251,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
         {/* OFFLINE ALERT */}
         {offlineInstances.length > 0 && (
-          <div className="bg-rose-50 border border-rose-200 rounded-xl p-4">
+          <div className="dashboard-offline-alert rounded-xl border border-rose-200 bg-rose-50 p-4">
             <div className="flex items-center gap-3">
               <AlertOctagon className="w-5 h-5 text-rose-600" />
 
@@ -272,7 +273,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         )}
 
         {/* KPI CARDS */}
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
+        <div className="dashboard-kpi-grid grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
 
           {/* TOTAL INSTANCES */}
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
@@ -341,23 +342,21 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             </div>
           </div>
 
-          {/* PENDING */}
+          {/* CREDITS */}
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-500">
-                Records Pending
-              </span>
+              <span className="text-xs font-medium text-slate-500">Credits Used</span>
 
-              <Clock className="w-4 h-4 text-amber-600" />
+              <Coins className="w-4 h-4 text-amber-600" />
             </div>
 
             <div className="mt-3">
               <p className="text-2xl font-bold text-amber-600 font-mono">
-                {formatNumber(kpis?.recordsPending)}
+                {formatNumber(kpis?.totalCredits)}
               </p>
 
               <p className="text-[11px] text-slate-400 mt-1">
-                Not available in current DB
+                From saved sync payloads
               </p>
             </div>
           </div>
@@ -383,32 +382,28 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             </div>
           </div>
 
-          {/* API STATUS */}
+          {/* MODALITIES */}
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-500">
-                API Status
-              </span>
+              <span className="text-xs font-medium text-slate-500">Modalities</span>
 
-              <Activity className="w-4 h-4 text-emerald-600" />
+              <ScanLine className="w-4 h-4 text-cyan-600" />
             </div>
 
             <div className="mt-3">
-              <p className="text-xl font-bold text-emerald-600 flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-
-                {kpis?.apiStatus ?? "UNKNOWN"}
+              <p className="text-2xl font-bold text-cyan-700 font-mono">
+                {formatNumber(kpis?.modalityCount)}
               </p>
 
               <p className="text-[11px] text-slate-400 mt-1">
-                Latency: {kpis?.avgResponseTime ?? "—"}
+                Present in saved data
               </p>
             </div>
           </div>
         </div>
 
         {/* INSTANCE HEALTH */}
-        <div className="space-y-3">
+        <div className="dashboard-instance-section space-y-3">
 
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
@@ -435,7 +430,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            <div className="dashboard-instance-list grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
 
               {instances.map((instance) => {
                 const isOnline = instance.status === "Online";
@@ -444,7 +439,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 return (
                   <div
                     key={instance.id}
-                    className={`bg-white rounded-xl border p-4 shadow-sm ${
+                    className={`dashboard-instance-row rounded-xl border bg-white p-4 shadow-sm ${
                       isOnline
                         ? "border-slate-200"
                         : isDelayed
@@ -453,7 +448,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                     }`}
                   >
                     {/* HEADER */}
-                    <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                    <div className="dashboard-instance-head flex items-center justify-between border-b border-slate-100 pb-3">
 
                       <div className="min-w-0">
                         <p className="text-xs font-extrabold text-slate-900 font-mono">
@@ -489,7 +484,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                     </div>
 
                     {/* METRICS */}
-                    <div className="py-4 space-y-2 text-xs">
+                    <div className="dashboard-instance-metrics space-y-2 py-4 text-xs">
 
                       <div className="flex justify-between gap-3">
                         <span className="text-slate-500">
@@ -513,16 +508,6 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
                       <div className="flex justify-between gap-3">
                         <span className="text-slate-500">
-                          Pending
-                        </span>
-
-                        <strong className="text-amber-600 font-mono">
-                          {formatNumber(instance.recordsPending)}
-                        </strong>
-                      </div>
-
-                      <div className="flex justify-between gap-3">
-                        <span className="text-slate-500">
                           Success Rate
                         </span>
 
@@ -540,10 +525,19 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                           {instance.failedSyncs}
                         </strong>
                       </div>
+
+                      <div className="flex justify-between gap-3">
+                        <span className="text-slate-500">Modalities</span>
+                        <strong className="text-slate-800 text-right">
+                          {instance.modalities.length
+                            ? instance.modalities.join(", ")
+                            : "-"}
+                        </strong>
+                      </div>
                     </div>
 
                     {/* FOOTER */}
-                    <div className="pt-3 border-t border-slate-100">
+                    <div className="dashboard-instance-foot border-t border-slate-100 pt-3">
                       <p className="text-[10px] text-slate-400">
                         Status is inferred from recent sync activity.
                       </p>
@@ -554,6 +548,67 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             </div>
           )}
         </div>
+
+        <section id="sync-data" className="dashboard-recent-section space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+              Recent synchronized data
+            </h2>
+            <span className="text-xs text-slate-400">
+              {dashboard?.recentRecords.length ?? 0} most recent records
+            </span>
+          </div>
+
+          <div className="dashboard-table-shell overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <table className="dashboard-table w-full min-w-[850px] text-left text-xs">
+              <thead className="border-b border-slate-200 bg-slate-50 text-slate-500">
+                <tr>
+                  <th className="px-4 py-3 font-semibold">Record</th>
+                  <th className="px-4 py-3 font-semibold">Instance</th>
+                  <th className="px-4 py-3 font-semibold">Modality</th>
+                  <th className="px-4 py-3 font-semibold">Processing started</th>
+                  <th className="px-4 py-3 font-semibold">Processing completed</th>
+                  <th className="px-4 py-3 font-semibold">Credits</th>
+                  <th className="px-4 py-3 font-semibold">Status</th>
+                  <th className="px-4 py-3 font-semibold">Saved at</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {dashboard?.recentRecords.map((record) => (
+                  <tr key={record.id} className="text-slate-700">
+                    <td className="px-4 py-3 font-mono">{record.id}</td>
+                    <td className="px-4 py-3">{record.instanceCode}</td>
+                    <td className="px-4 py-3 font-semibold">{record.modality ?? "-"}</td>
+                    <td className="px-4 py-3">{formatDateTime(record.processingCreatedAt)}</td>
+                    <td className="px-4 py-3">{formatDateTime(record.processingCompletedAt)}</td>
+                    <td className="px-4 py-3">{formatNumber(record.creditsUsed)}</td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`sync-status ${
+                          record.syncStatus?.toUpperCase() === "SYNCED"
+                            ? "is-synced"
+                            : record.syncStatus?.toUpperCase() === "FAILED"
+                            ? "is-failed"
+                            : "is-other"
+                        }`}
+                      >
+                        {record.syncStatus ?? "-"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">{formatDateTime(record.syncedAt)}</td>
+                  </tr>
+                ))}
+                {!dashboard?.recentRecords.length && (
+                  <tr>
+                    <td className="px-4 py-8 text-center text-slate-400" colSpan={8}>
+                      No synchronized records have been saved.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
       </div>
     </div>
   );
