@@ -1,9 +1,9 @@
-from datetime import datetime
+from datetime import date, datetime, time, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 from app.auth_api import verify_api_key
 
@@ -12,7 +12,10 @@ from app.models import (
     User,
     SyncRecord,
     SyncLog,
-    ApiKey
+    ApiKey,
+    Instance,
+    ModalityOption,
+    TrafficLog
 )
 from app.schemas import (
     LoginRequest,
@@ -363,6 +366,27 @@ def get_analytics(
     source_instances = db.query(
         func.count(func.distinct(SyncRecord.instance_code))
     ).scalar() or 0
+    configured_modalities = (
+        db.query(ModalityOption.name)
+        .filter(ModalityOption.is_active.is_(True))
+        .all()
+    )
+    observed_modalities = (
+        db.query(SyncRecord.modality)
+        .filter(SyncRecord.modality.is_not(None))
+        .distinct()
+        .all()
+    )
+    modality_names = {
+        modality.strip().upper(): modality.strip()
+        for (modality,) in observed_modalities
+        if modality and modality.strip()
+    }
+    modality_names.update({
+        name.strip().upper(): name.strip()
+        for (name,) in configured_modalities
+        if name and name.strip()
+    })
 
     return {
         "summary": {
@@ -379,6 +403,9 @@ def get_analytics(
             }
             for modality, records, credits in modality_rows
         ],
+        "availableModalities": sorted(
+            modality_names.values(), key=str.casefold
+        ),
         "daily": [
             {
                 "date": day.isoformat() if hasattr(day, "isoformat") else str(day),
@@ -399,6 +426,313 @@ def get_analytics(
             for instance_code, modality, records, credits in instance_rows
         ],
         "lastUpdated": datetime.utcnow().isoformat(),
+    }
+
+
+def traffic_date_bounds(
+    period: str,
+    start_date: date | None,
+    end_date: date | None,
+) -> tuple[datetime, datetime]:
+    today = datetime.now(timezone.utc).date()
+    if period == "today":
+        first_day = today
+        last_day = today
+    elif period == "yesterday":
+        first_day = today - timedelta(days=1)
+        last_day = first_day
+    elif period == "7d":
+        first_day = today - timedelta(days=6)
+        last_day = today
+    elif period == "30d":
+        first_day = today - timedelta(days=29)
+        last_day = today
+    elif period == "custom":
+        if start_date is None or end_date is None:
+            raise HTTPException(
+                status_code=400,
+                detail="start_date and end_date are required for custom ranges",
+            )
+        first_day = start_date
+        last_day = end_date
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="period must be today, yesterday, 7d, 30d, or custom",
+        )
+
+    if last_day < first_day:
+        raise HTTPException(
+            status_code=400,
+            detail="end_date must be on or after start_date",
+        )
+
+    return (
+        datetime.combine(first_day, time.min, tzinfo=timezone.utc),
+        datetime.combine(last_day + timedelta(days=1), time.min, tzinfo=timezone.utc),
+    )
+
+
+def traffic_filtered_query(
+    db: Session,
+    start: datetime,
+    end: datetime,
+):
+    return db.query(TrafficLog).filter(
+        TrafficLog.timestamp >= start,
+        TrafficLog.timestamp < end,
+    )
+
+
+def traffic_total_bytes():
+    return (
+        func.coalesce(TrafficLog.request_size, 0)
+        + func.coalesce(TrafficLog.response_size, 0)
+    )
+
+
+def traffic_success_rate():
+    return (
+        100.0
+        * func.sum(case((TrafficLog.is_success, 1), else_=0))
+        / func.count(TrafficLog.id)
+    )
+
+
+@router.get("/api/v1/analytics/traffic/overview")
+def get_traffic_overview(
+    period: str = "30d",
+    start_date: date | None = None,
+    end_date: date | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    start, end = traffic_date_bounds(period, start_date, end_date)
+    filtered = traffic_filtered_query(db, start, end)
+    total_requests = filtered.with_entities(func.count(TrafficLog.id)).scalar() or 0
+    total_data_bytes = filtered.with_entities(
+        func.coalesce(func.sum(traffic_total_bytes()), 0)
+    ).scalar() or 0
+    active_instances = (
+        filtered.with_entities(func.count(func.distinct(TrafficLog.instance_id)))
+        .filter(TrafficLog.instance_id.is_not(None))
+        .scalar()
+        or 0
+    )
+    instance_rows = (
+        db.query(
+            func.coalesce(Instance.name, "Unknown").label("name"),
+            func.count(TrafficLog.id).label("requests"),
+            func.coalesce(func.sum(traffic_total_bytes()), 0).label("data_bytes"),
+        )
+        .outerjoin(Instance, Instance.id == TrafficLog.instance_id)
+        .filter(TrafficLog.timestamp >= start, TrafficLog.timestamp < end)
+        .group_by(Instance.name)
+        .all()
+    )
+    highest = max(instance_rows, key=lambda row: row.data_bytes, default=None)
+    lowest = min(instance_rows, key=lambda row: row.data_bytes, default=None)
+
+    def serialize_instance(row):
+        if row is None:
+            return None
+        return {
+            "name": row.name,
+            "requests": row.requests,
+            "totalDataBytes": int(row.data_bytes or 0),
+        }
+
+    return {
+        "period": period,
+        "startDate": start.date().isoformat(),
+        "endDate": (end.date() - timedelta(days=1)).isoformat(),
+        "totalRequests": total_requests,
+        "totalDataBytes": int(total_data_bytes),
+        "activeInstances": active_instances,
+        "highestTrafficInstance": serialize_instance(highest),
+        "lowestTrafficInstance": serialize_instance(lowest),
+    }
+
+
+@router.get("/api/v1/analytics/traffic/daily")
+def get_traffic_daily(
+    period: str = "30d",
+    start_date: date | None = None,
+    end_date: date | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    start, end = traffic_date_bounds(period, start_date, end_date)
+    day_expression = func.date(func.timezone("UTC", TrafficLog.timestamp))
+    rows = (
+        db.query(
+            day_expression.label("day"),
+            func.count(TrafficLog.id).label("requests"),
+            func.coalesce(func.sum(traffic_total_bytes()), 0).label("data_bytes"),
+        )
+        .filter(TrafficLog.timestamp >= start, TrafficLog.timestamp < end)
+        .group_by(day_expression)
+        .order_by(day_expression)
+        .all()
+    )
+    return {
+        "period": period,
+        "items": [
+            {
+                "date": row.day.isoformat(),
+                "requests": row.requests,
+                "totalDataBytes": int(row.data_bytes or 0),
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.get("/api/v1/analytics/traffic/instances")
+def get_traffic_instances(
+    period: str = "30d",
+    start_date: date | None = None,
+    end_date: date | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    start, end = traffic_date_bounds(period, start_date, end_date)
+    rows = (
+        db.query(
+            func.coalesce(Instance.name, "Unknown").label("name"),
+            func.count(TrafficLog.id).label("requests"),
+            func.coalesce(func.sum(traffic_total_bytes()), 0).label("data_bytes"),
+            func.avg(TrafficLog.processing_time).label("avg_seconds"),
+            traffic_success_rate().label("success_rate"),
+        )
+        .outerjoin(Instance, Instance.id == TrafficLog.instance_id)
+        .filter(TrafficLog.timestamp >= start, TrafficLog.timestamp < end)
+        .group_by(Instance.name)
+        .order_by(func.count(TrafficLog.id).desc())
+        .all()
+    )
+    return {
+        "period": period,
+        "items": [
+            {
+                "instance": row.name,
+                "requests": row.requests,
+                "totalDataBytes": int(row.data_bytes or 0),
+                "averageResponseTimeMs": round(float(row.avg_seconds or 0) * 1000, 2),
+                "successRate": round(float(row.success_rate or 0), 1),
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.get("/api/v1/analytics/traffic/routes")
+def get_traffic_routes(
+    period: str = "30d",
+    start_date: date | None = None,
+    end_date: date | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    start, end = traffic_date_bounds(period, start_date, end_date)
+    rows = (
+        db.query(
+            TrafficLog.route.label("route"),
+            func.count(TrafficLog.id).label("requests"),
+            func.coalesce(func.sum(traffic_total_bytes()), 0).label("data_bytes"),
+            func.avg(TrafficLog.processing_time).label("avg_seconds"),
+            traffic_success_rate().label("success_rate"),
+        )
+        .filter(TrafficLog.timestamp >= start, TrafficLog.timestamp < end)
+        .group_by(TrafficLog.route)
+        .order_by(func.sum(traffic_total_bytes()).desc())
+        .all()
+    )
+    items = [
+        {
+            "route": row.route,
+            "requests": row.requests,
+            "totalDataBytes": int(row.data_bytes or 0),
+            "averageResponseTimeMs": round(float(row.avg_seconds or 0) * 1000, 2),
+            "successRate": round(float(row.success_rate or 0), 1),
+        }
+        for row in rows
+    ]
+    return {
+        "period": period,
+        "items": items,
+        "highestTrafficRoute": max(
+            items, key=lambda item: item["totalDataBytes"], default=None
+        ),
+        "lowestTrafficRoute": min(
+            items, key=lambda item: item["totalDataBytes"], default=None
+        ),
+        "mostRequestsRoute": max(
+            items, key=lambda item: item["requests"], default=None
+        ),
+        "fewestRequestsRoute": min(
+            items, key=lambda item: item["requests"], default=None
+        ),
+    }
+
+
+@router.get("/api/v1/analytics/traffic/details")
+def get_traffic_details(
+    period: str = "30d",
+    start_date: date | None = None,
+    end_date: date | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    start, end = traffic_date_bounds(period, start_date, end_date)
+    rows = (
+        db.query(
+            func.coalesce(Instance.name, "Unknown").label("instance"),
+            TrafficLog.route.label("route"),
+            func.count(TrafficLog.id).label("requests"),
+            func.coalesce(func.sum(traffic_total_bytes()), 0).label("data_bytes"),
+            func.avg(TrafficLog.processing_time).label("avg_seconds"),
+            traffic_success_rate().label("success_rate"),
+        )
+        .outerjoin(Instance, Instance.id == TrafficLog.instance_id)
+        .filter(TrafficLog.timestamp >= start, TrafficLog.timestamp < end)
+        .group_by(Instance.name, TrafficLog.route)
+        .order_by(func.sum(traffic_total_bytes()).desc())
+        .limit(500)
+        .all()
+    )
+    return {
+        "period": period,
+        "items": [
+            {
+                "instance": row.instance,
+                "route": row.route,
+                "requests": row.requests,
+                "totalDataBytes": int(row.data_bytes or 0),
+                "averageResponseTimeMs": round(float(row.avg_seconds or 0) * 1000, 2),
+                "successRate": round(float(row.success_rate or 0), 1),
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.get("/api/v1/analytics/instances")
+def list_traffic_instances(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    instances = db.query(Instance).order_by(Instance.name).all()
+    return {
+        "items": [
+            {
+                "id": instance.id,
+                "name": instance.name,
+                "identifier": instance.identifier,
+                "status": instance.status,
+            }
+            for instance in instances
+        ]
     }
 
 # ============================================================

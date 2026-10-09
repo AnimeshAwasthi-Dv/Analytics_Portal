@@ -50,11 +50,7 @@ export function AnalyticsPage() {
        * after refreshing the database data, reset the filter.
        */
       if (selectedModality !== "ALL") {
-        const availableModalities = new Set(
-          (response.byModality ?? [])
-            .map((row) => row.modality?.trim())
-            .filter(Boolean)
-        );
+        const availableModalities = new Set(response.availableModalities ?? []);
 
         if (!availableModalities.has(selectedModality)) {
           setSelectedModality("ALL");
@@ -86,30 +82,10 @@ export function AnalyticsPage() {
   }, []);
 
   /*
-   * Get modalities directly from the data returned by the backend.
-   *
-   * No XR / CT / MRI values are hardcoded here.
+   * Modalities come from configured options and values observed by the backend.
    */
   const availableModalities = useMemo(() => {
-    const modalities = new Map<string, string>();
-
-    for (const row of analytics?.byModality ?? []) {
-      const rawModality = row.modality?.trim();
-
-      if (!rawModality) {
-        continue;
-      }
-
-      const normalized = rawModality.toUpperCase();
-
-      if (!modalities.has(normalized)) {
-        modalities.set(normalized, rawModality);
-      }
-    }
-
-    return Array.from(modalities.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([, modality]) => modality);
+    return analytics?.availableModalities ?? [];
   }, [analytics]);
 
   /*
@@ -285,7 +261,6 @@ export function AnalyticsPage() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Dynamic modality filter */}
             <label className="text-[11px] font-semibold text-slate-600">
               Modality
 

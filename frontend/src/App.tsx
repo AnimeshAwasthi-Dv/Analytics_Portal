@@ -1,5 +1,6 @@
 import React, { lazy, Suspense, useEffect, useState } from "react";
 import {
+  Activity,
   BarChart3,
   FileText,
   Home,
@@ -23,6 +24,9 @@ import type { User } from "./services/api";
 const AnalyticsPage = lazy(async () => ({
   default: (await import("./pages/AnalyticsPage")).AnalyticsPage,
 }));
+const TrafficAnalyticsPage = lazy(async () => ({
+  default: (await import("./pages/TrafficAnalyticsPage")).TrafficAnalyticsPage,
+}));
 
 function PortalSidebar({ onLogout }: { onLogout: () => void }) {
   const location = useLocation();
@@ -41,7 +45,13 @@ function PortalSidebar({ onLogout }: { onLogout: () => void }) {
         <NavLink
           to="/dashboard"
           end
-          className={({ isActive }) => `portal-nav-link${isActive ? " active" : ""}`}
+          className={() =>
+            `portal-nav-link${
+              location.pathname === "/dashboard" && location.hash !== "#sync-data"
+                ? " active"
+                : ""
+            }`
+          }
         >
           <Home />
           <span>Dashboard</span>
@@ -52,6 +62,13 @@ function PortalSidebar({ onLogout }: { onLogout: () => void }) {
         >
           <BarChart3 />
           <span>Analytics</span>
+        </NavLink>
+        <NavLink
+          to="/traffic-analytics"
+          className={({ isActive }) => `portal-nav-link${isActive ? " active" : ""}`}
+        >
+          <Activity />
+          <span>Traffic</span>
         </NavLink>
         <NavLink
           to="/dashboard#sync-data"
@@ -172,6 +189,21 @@ function App() {
             <PortalShell onLogout={handleLogout}>
               <Suspense fallback={<p className="p-6 text-sm text-slate-500">Loading analytics...</p>}>
                 <AnalyticsPage />
+              </Suspense>
+            </PortalShell>
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }
+      />
+
+      <Route
+        path="/traffic-analytics"
+        element={
+          user ? (
+            <PortalShell onLogout={handleLogout}>
+              <Suspense fallback={<p className="p-6 text-sm text-slate-500">Loading traffic analytics...</p>}>
+                <TrafficAnalyticsPage />
               </Suspense>
             </PortalShell>
           ) : (

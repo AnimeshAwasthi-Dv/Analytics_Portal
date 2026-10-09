@@ -166,7 +166,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
   return (
     <div className="dashboard-page min-h-screen">
-      <div className="dashboard-content mx-auto">
+      <div
+        className={`dashboard-content mx-auto ${
+          location.hash === "#sync-data" ? "sync-data-only" : ""
+        }`}
+      >
 
         {/* HEADER */}
         <div className="dashboard-topbar rounded-xl border border-slate-200 bg-white p-5 shadow-sm">

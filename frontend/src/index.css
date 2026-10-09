@@ -217,6 +217,10 @@ button {
   padding: 10px 32px 32px;
 }
 
+.dashboard-content.sync-data-only > :not(#sync-data) {
+  display: none;
+}
+
 .dashboard-topbar,
 .analytics-topbar {
   border-color: var(--portal-border);

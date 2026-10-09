@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.database import Base, engine
 from app import models
 from app.routes import router
+from app.traffic_middleware import TrafficMonitoringMiddleware
 
 app = FastAPI(
     title="Central Sync Portal",
@@ -24,6 +25,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(TrafficMonitoringMiddleware)
 
 Base.metadata.create_all(bind=engine)
 

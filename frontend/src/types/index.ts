@@ -41,6 +41,7 @@ export interface AnalyticsResponse {
     records: number;
     credits: number;
   }>;
+  availableModalities: string[];
   daily: Array<{
     date: string;
     modality: string;

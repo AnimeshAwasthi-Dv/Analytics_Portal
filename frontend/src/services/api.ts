@@ -7,6 +7,59 @@ export interface User {
   email: string;
 }
 
+export type TrafficPeriod = "today" | "yesterday" | "7d" | "30d" | "custom";
+
+export interface TrafficFilter {
+  period: TrafficPeriod;
+  startDate?: string;
+  endDate?: string;
+}
+
+export interface TrafficOverview {
+  totalRequests: number;
+  totalDataBytes: number;
+  activeInstances: number;
+  highestTrafficInstance: {
+    name: string;
+    requests: number;
+    totalDataBytes: number;
+  } | null;
+  lowestTrafficInstance: {
+    name: string;
+    requests: number;
+    totalDataBytes: number;
+  } | null;
+}
+
+export interface TrafficBreakdown {
+  instance?: string;
+  route?: string;
+  requests: number;
+  totalDataBytes: number;
+  averageResponseTimeMs: number;
+  successRate: number;
+}
+
+export interface DailyTraffic {
+  date: string;
+  requests: number;
+  totalDataBytes: number;
+}
+
+export interface TrafficAnalyticsData {
+  overview: TrafficOverview;
+  daily: DailyTraffic[];
+  instances: TrafficBreakdown[];
+  routes: TrafficBreakdown[];
+  routeHighlights: {
+    highestTrafficRoute: TrafficBreakdown | null;
+    lowestTrafficRoute: TrafficBreakdown | null;
+    mostRequestsRoute: TrafficBreakdown | null;
+    fewestRequestsRoute: TrafficBreakdown | null;
+  };
+  details: TrafficBreakdown[];
+}
+
 /*
  * Backend URL
  *
@@ -92,5 +145,58 @@ export const api = {
     );
 
     return response.data;
+  },
+
+  async getTrafficAnalytics(
+    filter: TrafficFilter
+  ): Promise<TrafficAnalyticsData> {
+    const params = {
+      period: filter.period,
+      ...(filter.period === "custom"
+        ? { start_date: filter.startDate, end_date: filter.endDate }
+        : {}),
+    };
+    const [overview, daily, instances, routes, details] = await Promise.all([
+      axiosInstance.get<TrafficOverview>(
+        "/api/v1/analytics/traffic/overview",
+        { params }
+      ),
+      axiosInstance.get<{ items: DailyTraffic[] }>(
+        "/api/v1/analytics/traffic/daily",
+        { params }
+      ),
+      axiosInstance.get<{
+        items: TrafficBreakdown[];
+        highestTrafficRoute: TrafficBreakdown | null;
+        lowestTrafficRoute: TrafficBreakdown | null;
+        mostRequestsRoute: TrafficBreakdown | null;
+        fewestRequestsRoute: TrafficBreakdown | null;
+      }>(
+        "/api/v1/analytics/traffic/instances",
+        { params }
+      ),
+      axiosInstance.get<{ items: TrafficBreakdown[] }>(
+        "/api/v1/analytics/traffic/routes",
+        { params }
+      ),
+      axiosInstance.get<{ items: TrafficBreakdown[] }>(
+        "/api/v1/analytics/traffic/details",
+        { params }
+      ),
+    ]);
+
+    return {
+      overview: overview.data,
+      daily: daily.data.items,
+      instances: instances.data.items,
+      routes: routes.data.items,
+      routeHighlights: {
+        highestTrafficRoute: routes.data.highestTrafficRoute,
+        lowestTrafficRoute: routes.data.lowestTrafficRoute,
+        mostRequestsRoute: routes.data.mostRequestsRoute,
+        fewestRequestsRoute: routes.data.fewestRequestsRoute,
+      },
+      details: details.data.items,
+    };
   },
 };

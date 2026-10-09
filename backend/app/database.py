@@ -22,6 +22,11 @@ else:
     # Local fallback to SQLite so app works immediately out of the box without crashing
     DATABASE_URL = "sqlite:///./central_sync.db"
 
+if DATABASE_URL.startswith("postgresql+psycopg2://"):
+    DATABASE_URL = DATABASE_URL.replace(
+        "postgresql+psycopg2://", "postgresql+psycopg://", 1
+    )
+
 if DATABASE_URL.startswith("sqlite"):
     engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 else:
