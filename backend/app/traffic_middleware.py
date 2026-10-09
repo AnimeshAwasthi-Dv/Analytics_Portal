@@ -73,12 +73,22 @@ class TrafficMonitoringMiddleware:
         started_clock = time.perf_counter()
         headers = dict(scope.get("headers", []))
         try:
-            request_size = int(headers[b"content-length"])
+            declared_request_size = int(headers[b"content-length"])
         except (KeyError, ValueError):
-            request_size = None
+            declared_request_size = None
 
+        request_size = 0
+        request_body_observed = False
         response_size = 0
         status_code = 500
+
+        async def receive_with_metrics() -> dict:
+            nonlocal request_size, request_body_observed
+            message = await receive()
+            if message["type"] == "http.request":
+                request_body_observed = True
+                request_size += len(message.get("body", b""))
+            return message
 
         async def send_with_metrics(message: dict) -> None:
             nonlocal response_size, status_code
@@ -89,8 +99,10 @@ class TrafficMonitoringMiddleware:
             await send(message)
 
         try:
-            await self.app(scope, receive, send_with_metrics)
+            await self.app(scope, receive_with_metrics, send_with_metrics)
         finally:
+            if not request_body_observed:
+                request_size = declared_request_size
             route = scope.get("route")
             route_path = getattr(route, "path", path)
             state = scope.get("state") or {}

@@ -23,7 +23,14 @@ if config.config_file_name is not None:
 database_url = os.getenv("DATABASE_URL")
 
 if not database_url:
-    raise ValueError("DATABASE_URL is missing from .env")
+    raise ValueError("DATABASE_URL is required for PostgreSQL migrations")
+
+if database_url.startswith("postgresql+psycopg2://"):
+    database_url = database_url.replace(
+        "postgresql+psycopg2://", "postgresql+psycopg://", 1
+    )
+if not database_url.startswith(("postgresql://", "postgresql+psycopg://")):
+    raise ValueError("Alembic migrations support PostgreSQL only")
 
 config.set_main_option("sqlalchemy.url", database_url)
 

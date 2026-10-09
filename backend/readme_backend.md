@@ -101,6 +101,9 @@ cd CDS
 # 2. PostgreSQL Setup
 
 PostgreSQL is required for the backend.
+The backend does not fall back to SQLite: startup fails unless PostgreSQL
+connection settings are provided. Apply Alembic migrations before starting the
+application; the server does not create or alter database tables on startup.
 
 ## Create the Database User
 
@@ -177,9 +180,12 @@ Use the following structure:
 ```env
 DATABASE_URL=postgresql+psycopg2://central_sync:YOUR_DATABASE_PASSWORD@localhost:5432/central_sync
 
-JWT_SECRET=CHANGE_THIS_TO_A_RANDOM_SECRET
+APP_ENV=development
+JWT_SECRET=REPLACE_WITH_A_RANDOM_SECRET_AT_LEAST_32_CHARACTERS_LONG
 JWT_ALGORITHM=HS256
 JWT_EXPIRATION=60
+COOKIE_SECURE=false
+CORS_ALLOWED_ORIGINS=http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174
 
 INITIAL_ADMIN_EMAIL=admin@local.com
 INITIAL_ADMIN_PASSWORD=CHANGE_THIS_PASSWORD
@@ -196,16 +202,25 @@ PORTAL_API_KEY_5=
 
 Do **not** commit `.env` to Git.
 
-The `.env` file contains passwords, JWT secrets, and API keys.
+The `.env` file contains passwords, JWT secrets, and API keys. Never commit
+real credentials or copy live credentials into `.env.example`. In production,
+set `APP_ENV=production`, provide a strong `JWT_SECRET`, set
+`COOKIE_SECURE=true`, and configure `CORS_ALLOWED_ORIGINS` with the exact
+frontend origins (comma-separated, without `*`).
+If a database password or other credential has been exposed, rotate it and
+update the corresponding secret configuration.
 
 A safe `.env.example` should be committed instead:
 
 ```env
 DATABASE_URL=postgresql+psycopg2://central_sync:YOUR_DATABASE_PASSWORD@localhost:5432/central_sync
 
-JWT_SECRET=CHANGE_ME
+APP_ENV=development
+JWT_SECRET=REPLACE_WITH_A_RANDOM_SECRET_AT_LEAST_32_CHARACTERS_LONG
 JWT_ALGORITHM=HS256
 JWT_EXPIRATION=60
+COOKIE_SECURE=false
+CORS_ALLOWED_ORIGINS=http://localhost:5173,http://localhost:5174,http://127.0.0.1:5173,http://127.0.0.1:5174
 
 INITIAL_ADMIN_EMAIL=admin@local.com
 INITIAL_ADMIN_PASSWORD=CHANGE_ME
@@ -237,12 +252,23 @@ Current schema includes:
 ```text
 users
 api_keys
+instances (including last_seen_at)
+traffic_logs
 sync_records
 sync_logs
+modality_options
 alembic_version
 ```
 
 You should not need to manually create these application tables.
+
+Back up existing production databases and inspect their recorded Alembic
+revision before upgrading. Do not stamp an existing database without verifying
+its schema matches that revision. The API-key hashing migration is intentionally
+one-way; retain the source key values in the agent secret stores.
+
+For a PostgreSQL database already at an older Alembic revision, back it up and
+run `alembic current` followed by `alembic upgrade head` from `backend/`.
 
 ---
 
@@ -338,12 +364,13 @@ http://localhost:5173
 
 # 9. Authentication
 
-The portal uses JWT authentication.
+The portal uses JWT authentication. The login cookie is HTTP-only and uses the
+configured `COOKIE_SECURE` setting; production deployments must enable it.
 
-The JWT is stored in a:
+The JWT is stored in an HTTP-only cookie that is Secure in production:
 
 ```text
-Secure HTTP-only cookie
+HTTP-only cookie
 ```
 
 The token is not stored in:
@@ -352,6 +379,13 @@ The token is not stored in:
 localStorage
 sessionStorage
 ```
+
+Source agents must send their configured API key as a Bearer token when
+calling `POST /api/v1/heartbeat`. Each accepted heartbeat updates the
+instance's persisted last-seen timestamp, which drives dashboard liveness.
+API keys continue to be sent as their original secret, but the database stores
+one-way SHA-256 digests. The migration converts existing plaintext values
+without requiring source-agent key rotation.
 
 Authentication endpoints:
 

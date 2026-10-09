@@ -22,6 +22,7 @@ export interface SyncRecord {
   id: number;
   instanceCode: string;
   modality: string | null;
+  studyDescription: string | null;
   processingCreatedAt: string | null;
   processingCompletedAt: string | null;
   creditsUsed: number;
@@ -44,6 +45,7 @@ export interface AnalyticsResponse {
   availableModalities: string[];
   daily: Array<{
     date: string;
+    instanceCode: string;
     modality: string;
     records: number;
     credits: number;
@@ -63,3 +65,7 @@ export interface DashboardResponse {
   recentRecords: SyncRecord[];
   lastUpdated: string;
 }
+
+export type DashboardLoadResult =
+  | { ok: true; data: DashboardResponse }
+  | { ok: false; error: unknown };

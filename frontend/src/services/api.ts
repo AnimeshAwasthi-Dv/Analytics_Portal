@@ -1,4 +1,3 @@
-import axios from "axios";
 import type { AnalyticsResponse, DashboardResponse } from "../types";
 
 export interface User {
@@ -24,16 +23,11 @@ export interface TrafficOverview {
     requests: number;
     totalDataBytes: number;
   } | null;
-  lowestTrafficInstance: {
-    name: string;
-    requests: number;
-    totalDataBytes: number;
-  } | null;
 }
 
-export interface TrafficBreakdown {
-  instance?: string;
-  route?: string;
+export interface InstanceTraffic {
+  instance: string;
+  name: string;
   requests: number;
   totalDataBytes: number;
   averageResponseTimeMs: number;
@@ -46,18 +40,28 @@ export interface DailyTraffic {
   totalDataBytes: number;
 }
 
+export interface DailyInstanceTraffic extends DailyTraffic {
+  instance: string;
+}
+
+export interface RecentTrafficRequest {
+  timestamp: string;
+  instance: string;
+  instanceName: string;
+  method: string;
+  route: string;
+  statusCode: number;
+  totalDataBytes: number;
+}
+
 export interface TrafficAnalyticsData {
+  startDate: string;
+  endDate: string;
   overview: TrafficOverview;
   daily: DailyTraffic[];
-  instances: TrafficBreakdown[];
-  routes: TrafficBreakdown[];
-  routeHighlights: {
-    highestTrafficRoute: TrafficBreakdown | null;
-    lowestTrafficRoute: TrafficBreakdown | null;
-    mostRequestsRoute: TrafficBreakdown | null;
-    fewestRequestsRoute: TrafficBreakdown | null;
-  };
-  details: TrafficBreakdown[];
+  dailyByInstance: DailyInstanceTraffic[];
+  recentRequests: RecentTrafficRequest[];
+  instances: InstanceTraffic[];
 }
 
 /*
@@ -77,24 +81,137 @@ const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL ?? ""
 ).replace(/\/$/, "");
 
-console.log("API_BASE_URL =", API_BASE_URL);
+interface ApiRequestOptions {
+  method?: "GET" | "POST";
+  data?: unknown;
+  params?: Record<string, string | undefined>;
+}
 
-export const axiosInstance = axios.create({
-  baseURL: API_BASE_URL,
-  withCredentials: true,
-  headers: {
-    "Content-Type": "application/json",
+interface ApiError extends Error {
+  response: {
+    data: unknown;
+    status: number;
+  };
+}
+
+function getErrorMessage(data: unknown, status: number): string {
+  if (typeof data === "object" && data !== null && "detail" in data) {
+    const detail = data.detail;
+    if (typeof detail === "string") {
+      return detail;
+    }
+    if (Array.isArray(detail)) {
+      return detail
+        .map((item) =>
+          typeof item === "object" && item !== null && "msg" in item
+            ? String(item.msg)
+            : String(item)
+        )
+        .join(", ");
+    }
+  }
+
+  return `Request failed with status code ${status}`;
+}
+
+
+async function apiRequest<T>(
+  endpoint: string,
+  options: ApiRequestOptions = {}
+): Promise<T> {
+  const query = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(options.params ?? {})) {
+    if (value !== undefined) {
+      query.set(key, value);
+    }
+  }
+
+  const search = query.toString();
+  const method = options.method ?? "GET";
+  const hasBody = options.data !== undefined;
+
+  const response = await fetch(
+    `${API_BASE_URL}${endpoint}${search ? `?${search}` : ""}`,
+    {
+      method,
+      credentials: "include",
+      ...(hasBody
+        ? {
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(options.data),
+          }
+        : {}),
+    }
+  );
+
+  const responseText = await response.text();
+  let responseData: unknown = responseText;
+
+  if (responseText) {
+    try {
+      responseData = JSON.parse(responseText);
+    } catch {
+      responseData = responseText;
+    }
+  }
+
+  if (!response.ok) {
+    const error = new Error(
+      getErrorMessage(responseData, response.status)
+    ) as ApiError;
+
+    error.response = {
+      data: responseData,
+      status: response.status,
+    };
+
+    throw error;
+  }
+
+  return responseData as T;
+}
+
+
+const httpClient = {
+  get<T>(
+    endpoint: string,
+    config?: { params?: Record<string, string | undefined> }
+  ): Promise<{ data: T }> {
+    return apiRequest<T>(endpoint, { params: config?.params }).then((data) => ({
+      data,
+    }));
   },
-});
+  post<T>(endpoint: string, data?: unknown): Promise<{ data: T }> {
+    return apiRequest<T>(endpoint, { method: "POST", data }).then((result) => ({
+      data: result,
+    }));
+  },
+};
+
+let currentUserRequest: Promise<User> | null = null;
+let dashboardRequest: Promise<DashboardResponse> | null = null;
+let analyticsRequest: Promise<AnalyticsResponse> | null = null;
 
 export const api = {
   // --------------------------------------------------
   // GET CURRENT USER
   // --------------------------------------------------
   async getCurrentUser(): Promise<User> {
-    const response = await axiosInstance.get<User>("/auth/me");
+    if (!currentUserRequest) {
+      currentUserRequest = httpClient
+        .get<User>("/auth/me")
+        .then((response) => response.data);
+    }
+    const request = currentUserRequest;
 
-    return response.data;
+    try {
+      return await request;
+    } finally {
+      if (currentUserRequest === request) {
+        currentUserRequest = null;
+      }
+    }
   },
 
   // --------------------------------------------------
@@ -107,7 +224,7 @@ export const api = {
     message: string;
     user: User;
   }> {
-    const response = await axiosInstance.post<{
+    const response = await httpClient.post<{
       message: string;
       user: User;
     }>("/auth/login", {
@@ -122,29 +239,47 @@ export const api = {
   // LOGOUT
   // --------------------------------------------------
   async logout(): Promise<void> {
-    await axiosInstance.post("/auth/logout");
+    await httpClient.post("/auth/logout");
   },
 
   // --------------------------------------------------
   // DASHBOARD
   // --------------------------------------------------
   async getDashboard(): Promise<DashboardResponse> {
-    const response = await axiosInstance.get<DashboardResponse>(
-      "/api/v1/dashboard"
-    );
+    if (!dashboardRequest) {
+      dashboardRequest = httpClient
+        .get<DashboardResponse>("/api/v1/dashboard")
+        .then((response) => response.data);
+    }
+    const request = dashboardRequest;
 
-    return response.data;
+    try {
+      return await request;
+    } finally {
+      if (dashboardRequest === request) {
+        dashboardRequest = null;
+      }
+    }
   },
 
   // --------------------------------------------------
   // ANALYTICS
   // --------------------------------------------------
   async getAnalytics(): Promise<AnalyticsResponse> {
-    const response = await axiosInstance.get<AnalyticsResponse>(
-      "/api/v1/analytics"
-    );
+    if (!analyticsRequest) {
+      analyticsRequest = httpClient
+        .get<AnalyticsResponse>("/api/v1/analytics")
+        .then((response) => response.data);
+    }
+    const request = analyticsRequest;
 
-    return response.data;
+    try {
+      return await request;
+    } finally {
+      if (analyticsRequest === request) {
+        analyticsRequest = null;
+      }
+    }
   },
 
   async getTrafficAnalytics(
@@ -156,47 +291,8 @@ export const api = {
         ? { start_date: filter.startDate, end_date: filter.endDate }
         : {}),
     };
-    const [overview, daily, instances, routes, details] = await Promise.all([
-      axiosInstance.get<TrafficOverview>(
-        "/api/v1/analytics/traffic/overview",
-        { params }
-      ),
-      axiosInstance.get<{ items: DailyTraffic[] }>(
-        "/api/v1/analytics/traffic/daily",
-        { params }
-      ),
-      axiosInstance.get<{
-        items: TrafficBreakdown[];
-        highestTrafficRoute: TrafficBreakdown | null;
-        lowestTrafficRoute: TrafficBreakdown | null;
-        mostRequestsRoute: TrafficBreakdown | null;
-        fewestRequestsRoute: TrafficBreakdown | null;
-      }>(
-        "/api/v1/analytics/traffic/instances",
-        { params }
-      ),
-      axiosInstance.get<{ items: TrafficBreakdown[] }>(
-        "/api/v1/analytics/traffic/routes",
-        { params }
-      ),
-      axiosInstance.get<{ items: TrafficBreakdown[] }>(
-        "/api/v1/analytics/traffic/details",
-        { params }
-      ),
-    ]);
-
-    return {
-      overview: overview.data,
-      daily: daily.data.items,
-      instances: instances.data.items,
-      routes: routes.data.items,
-      routeHighlights: {
-        highestTrafficRoute: routes.data.highestTrafficRoute,
-        lowestTrafficRoute: routes.data.lowestTrafficRoute,
-        mostRequestsRoute: routes.data.mostRequestsRoute,
-        fewestRequestsRoute: routes.data.fewestRequestsRoute,
-      },
-      details: details.data.items,
-    };
+    return httpClient
+      .get<TrafficAnalyticsData>("/api/v1/analytics/traffic/summary", { params })
+      .then((response) => response.data);
   },
 };

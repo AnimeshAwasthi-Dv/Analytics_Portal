@@ -1,5 +1,4 @@
 import React, { FormEvent, useState } from "react";
-import { Lock, Mail, LogIn, AlertCircle } from "lucide-react";
 import { api } from "../services/api.ts";
 import type { User } from "../services/api";
 
@@ -56,11 +55,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         {/* BRAND */}
         <div className="text-center mb-8">
 
-          <div className="mx-auto w-14 h-14 rounded-2xl bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-900/30">
-            <Lock className="w-7 h-7 text-white" />
-          </div>
-
-          <h1 className="text-2xl font-bold text-white mt-5">
+          <h1 className="text-2xl font-bold text-white">
             Central Sync Portal
           </h1>
 
@@ -70,7 +65,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         </div>
 
         {/* LOGIN CARD */}
-        <div className="bg-white rounded-2xl shadow-2xl p-7">
+        <div className="bg-white border border-slate-300 rounded-lg p-7">
 
           <div className="mb-6">
             <h2 className="text-lg font-bold text-slate-900">
@@ -84,10 +79,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
           {/* ERROR */}
           {error && (
-            <div className="mb-5 flex items-start gap-2 p-3 rounded-lg bg-rose-50 border border-rose-200">
-              <AlertCircle className="w-4 h-4 text-rose-600 mt-0.5 shrink-0" />
-
-              <p className="text-xs font-medium text-rose-700">
+            <div className="mb-5 p-3 rounded border border-rose-200 bg-rose-50">
+              <p className="text-xs font-medium text-rose-700" role="alert">
                 {error}
               </p>
             </div>
@@ -104,21 +97,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 Email Address
               </label>
 
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(event) =>
-                    setEmail(event.target.value)
-                  }
-                  placeholder="admin@local.com"
-                  autoComplete="email"
-                  className="w-full pl-10 pr-3 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-lg outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                  disabled={loading}
-                />
-              </div>
+              <input
+                type="email"
+                value={email}
+                onChange={(event) =>
+                  setEmail(event.target.value)
+                }
+                placeholder="admin@local.com"
+                autoComplete="email"
+                className="w-full px-3 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded outline-none focus:border-blue-500"
+                disabled={loading}
+              />
             </div>
 
             {/* PASSWORD */}
@@ -127,40 +116,26 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 Password
               </label>
 
-              <div className="relative">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(event) =>
-                    setPassword(event.target.value)
-                  }
-                  placeholder="Enter your password"
-                  autoComplete="current-password"
-                  className="w-full pl-10 pr-3 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded-lg outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                  disabled={loading}
-                />
-              </div>
+              <input
+                type="password"
+                value={password}
+                onChange={(event) =>
+                  setPassword(event.target.value)
+                }
+                placeholder="Enter your password"
+                autoComplete="current-password"
+                className="w-full px-3 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded outline-none focus:border-blue-500"
+                disabled={loading}
+              />
             </div>
 
             {/* SUBMIT */}
             <button
               type="submit"
               disabled={loading}
-              className="w-full flex items-center justify-center gap-2 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-sm font-semibold rounded-lg transition-colors"
+              className="w-full py-2.5 bg-blue-700 hover:bg-blue-800 disabled:bg-blue-500 text-white text-sm font-semibold rounded"
             >
-              {loading ? (
-                <>
-                  <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                  Signing in...
-                </>
-              ) : (
-                <>
-                  <LogIn className="w-4 h-4" />
-                  Sign In
-                </>
-              )}
+              {loading ? "Signing in..." : "Sign In"}
             </button>
 
           </form>

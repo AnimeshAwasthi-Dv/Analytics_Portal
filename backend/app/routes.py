@@ -1,9 +1,10 @@
+import logging
 from datetime import date, datetime, time, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 from sqlalchemy import case, func
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from app.auth_api import verify_api_key
 
@@ -25,11 +26,14 @@ from app.schemas import (
 from app.auth import (
     verify_password,
     create_access_token,
-    get_current_user
+    get_current_user,
+    COOKIE_SECURE,
+    TOKEN_EXPIRATION,
 )
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def serialize_sync_record(record: SyncRecord):
@@ -37,6 +41,7 @@ def serialize_sync_record(record: SyncRecord):
         "id": record.id,
         "instanceCode": record.instance_code,
         "modality": record.modality,
+        "studyDescription": record.study_description,
         "processingCreatedAt": (
             record.processing_created_at.isoformat()
             if record.processing_created_at
@@ -51,6 +56,12 @@ def serialize_sync_record(record: SyncRecord):
         "syncStatus": record.sync_status,
         "syncedAt": record.synced_at.isoformat() if record.synced_at else None,
     }
+
+
+def as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 
@@ -86,7 +97,7 @@ def login(
     if not user or not verify_password(
         data.password,
         user.hashed_password
-    ):
+    ) or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password"
@@ -111,9 +122,9 @@ def login(
         key="access_token",
         value=token,
         httponly=True,
-        secure=False,       # True in production with HTTPS
+        secure=COOKIE_SECURE,
         samesite="lax",
-        max_age=3600
+        max_age=TOKEN_EXPIRATION * 60
     )
 
     return response
@@ -154,43 +165,86 @@ def get_dashboard(
     current_user: User = Depends(get_current_user),
 ):
     # Get all registered API keys / instances
-    api_keys = db.query(ApiKey).all()
+    api_keys = db.query(ApiKey.key_name).all()
 
-    # Get all sync records
-    sync_records = db.query(SyncRecord).all()
+    record_stats = {}
+    modalities_by_instance = {}
+    modality_names = set()
 
-    # Get all sync logs
-    sync_logs = db.query(SyncLog).all()
+    record_rows = (
+        db.query(
+            SyncRecord.instance_code,
+            SyncRecord.modality,
+            func.sum(
+                case((SyncRecord.sync_status == "SYNCED", 1), else_=0)
+            ),
+            func.max(
+                case(
+                    (SyncRecord.sync_status == "SYNCED", SyncRecord.synced_at),
+                    else_=None,
+                )
+            ),
+            func.coalesce(
+                func.sum(
+                    case(
+                        (SyncRecord.sync_status == "SYNCED", SyncRecord.credits_used),
+                        else_=0,
+                    )
+                ),
+                0,
+            ),
+        )
+        .group_by(SyncRecord.instance_code, SyncRecord.modality)
+        .all()
+    )
+
+    for instance_code, modality, records_synced, last_sync, credits in record_rows:
+        previous_records, previous_last_sync, previous_credits = record_stats.get(
+            instance_code, (0, None, 0)
+        )
+        record_stats[instance_code] = (
+            previous_records + (records_synced or 0),
+            max(
+                (
+                    timestamp
+                    for timestamp in (previous_last_sync, last_sync)
+                    if timestamp
+                ),
+                default=None,
+            ),
+            previous_credits + (credits or 0),
+        )
+        if modality:
+            modalities_by_instance.setdefault(instance_code, []).append(modality)
+            modality_names.add(modality)
+
+    heartbeat_rows = (
+        db.query(Instance.identifier, Instance.last_seen_at)
+        .filter(Instance.identifier.in_([name for (name,) in api_keys]))
+        .all()
+    )
+    heartbeat_by_instance = {
+        identifier: last_seen_at
+        for identifier, last_seen_at in heartbeat_rows
+        if last_seen_at is not None
+    }
+
+    log_stats = {
+        instance_code: (successful_syncs or 0, failed_syncs or 0)
+        for instance_code, successful_syncs, failed_syncs in db.query(
+            SyncLog.instance_code,
+            func.sum(case((SyncLog.status == "SUCCESS", 1), else_=0)),
+            func.sum(case((SyncLog.status == "FAILED", 1), else_=0)),
+        )
+        .filter(SyncLog.event_type == "SYNC")
+        .group_by(SyncLog.instance_code)
+        .all()
+    }
 
     instances = []
 
-    for api_key in api_keys:
-        instance_code = api_key.key_name
-
-        instance_records = [
-            record
-            for record in sync_records
-            if record.instance_code == instance_code
-        ]
-
-        instance_logs = [
-            log
-            for log in sync_logs
-            if log.instance_code == instance_code
-            and log.event_type == "SYNC"
-        ]
-
-        successful_syncs = sum(
-            1
-            for log in instance_logs
-            if log.status == "SUCCESS"
-        )
-
-        failed_syncs = sum(
-            1
-            for log in instance_logs
-            if log.status == "FAILED"
-        )
+    for (instance_code,) in api_keys:
+        successful_syncs, failed_syncs = log_stats.get(instance_code, (0, 0))
 
         total_attempts = successful_syncs + failed_syncs
 
@@ -203,36 +257,17 @@ def get_dashboard(
             else 0
         )
 
-        synced_records = [
-            record
-            for record in instance_records
-            if record.sync_status == "SYNCED"
-        ]
+        records_synced, last_sync, _ = record_stats.get(
+            instance_code, (0, None, 0)
+        )
 
-        last_sync = None
-
-        if synced_records:
-            timestamps = [
-                record.synced_at
-                for record in synced_records
-                if record.synced_at is not None
-            ]
-
-            if timestamps:
-                last_sync = max(timestamps)
-
-        # Determine status from recent sync activity
+        # Fall back to sync activity until an instance has reported a heartbeat.
         status = "Offline"
+        last_activity = heartbeat_by_instance.get(instance_code, last_sync)
 
-        if last_sync:
-            last_sync_naive = (
-                last_sync.replace(tzinfo=None)
-                if last_sync.tzinfo
-                else last_sync
-            )
-
+        if last_activity:
             age_seconds = (
-                datetime.utcnow() - last_sync_naive
+                datetime.now(timezone.utc) - as_utc(last_activity)
             ).total_seconds()
 
             if age_seconds <= 300:
@@ -250,14 +285,10 @@ def get_dashboard(
                     if last_sync
                     else None
                 ),
-                "recordsSynced": len(synced_records),
+                "recordsSynced": records_synced,
                 "successRate": success_rate,
                 "failedSyncs": failed_syncs,
-                "modalities": sorted({
-                    record.modality
-                    for record in instance_records
-                    if record.modality
-                }),
+                "modalities": sorted(modalities_by_instance.get(instance_code, [])),
             }
         )
 
@@ -270,28 +301,16 @@ def get_dashboard(
         if instance["status"] == "Online"
     )
 
-    total_records_synced = sum(
-        1
-        for record in sync_records
-        if record.sync_status == "SYNCED"
-    )
+    total_records_synced = sum(stats[0] for stats in record_stats.values())
 
     total_failed_syncs = sum(
         instance["failedSyncs"]
         for instance in instances
     )
 
-    total_credits = sum(
-        record.credits_used or 0
-        for record in sync_records
-        if record.sync_status == "SYNCED"
-    )
+    total_credits = sum(stats[2] for stats in record_stats.values())
 
-    modality_count = len({
-        record.modality
-        for record in sync_records
-        if record.modality
-    })
+    modality_count = len(modality_names)
 
     recent_records = (
         db.query(SyncRecord)
@@ -311,7 +330,7 @@ def get_dashboard(
         },
         "instances": instances,
         "recentRecords": [serialize_sync_record(record) for record in recent_records],
-        "lastUpdated": datetime.utcnow().isoformat(),
+        "lastUpdated": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -320,11 +339,6 @@ def get_analytics(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    total_records = db.query(func.count(SyncRecord.id)).scalar() or 0
-    total_credits = db.query(
-        func.coalesce(func.sum(SyncRecord.credits_used), 0)
-    ).scalar() or 0
-
     modality_rows = (
         db.query(
             SyncRecord.modality,
@@ -335,16 +349,22 @@ def get_analytics(
         .all()
     )
 
+    trend_start = datetime.now(timezone.utc) - timedelta(days=365)
     daily_rows = (
         db.query(
             func.date(SyncRecord.processing_created_at),
+            SyncRecord.instance_code,
             SyncRecord.modality,
             func.count(SyncRecord.id),
             func.coalesce(func.sum(SyncRecord.credits_used), 0),
         )
-        .filter(SyncRecord.processing_created_at.is_not(None))
+        .filter(
+            SyncRecord.processing_created_at.is_not(None),
+            SyncRecord.processing_created_at >= trend_start,
+        )
         .group_by(
             func.date(SyncRecord.processing_created_at),
+            SyncRecord.instance_code,
             SyncRecord.modality,
         )
         .order_by(func.date(SyncRecord.processing_created_at))
@@ -363,23 +383,24 @@ def get_analytics(
         .all()
     )
 
-    source_instances = db.query(
-        func.count(func.distinct(SyncRecord.instance_code))
-    ).scalar() or 0
+    total_records = sum(records for _modality, records, _credits in modality_rows)
+    total_credits = sum(credits for _modality, _records, credits in modality_rows)
+    source_instances = len(
+        {
+            instance_code
+            for instance_code, _modality, _records, _credits in instance_rows
+            if instance_code is not None
+        }
+    )
+
     configured_modalities = (
         db.query(ModalityOption.name)
         .filter(ModalityOption.is_active.is_(True))
         .all()
     )
-    observed_modalities = (
-        db.query(SyncRecord.modality)
-        .filter(SyncRecord.modality.is_not(None))
-        .distinct()
-        .all()
-    )
     modality_names = {
         modality.strip().upper(): modality.strip()
-        for (modality,) in observed_modalities
+        for modality, _records, _credits in modality_rows
         if modality and modality.strip()
     }
     modality_names.update({
@@ -409,11 +430,12 @@ def get_analytics(
         "daily": [
             {
                 "date": day.isoformat() if hasattr(day, "isoformat") else str(day),
+                "instanceCode": instance_code,
                 "modality": modality or "Not specified",
                 "records": records,
                 "credits": credits,
             }
-            for day, modality, records, credits in daily_rows
+            for day, instance_code, modality, records, credits in daily_rows
             if day is not None
         ],
         "byInstance": [
@@ -425,7 +447,7 @@ def get_analytics(
             }
             for instance_code, modality, records, credits in instance_rows
         ],
-        "lastUpdated": datetime.utcnow().isoformat(),
+        "lastUpdated": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -499,6 +521,166 @@ def traffic_success_rate():
     )
 
 
+@router.get("/api/v1/analytics/traffic/summary")
+def get_traffic_summary(
+    period: str = "30d",
+    start_date: date | None = None,
+    end_date: date | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    start, end = traffic_date_bounds(period, start_date, end_date)
+    day_expression = func.date(func.timezone("UTC", TrafficLog.timestamp))
+    rows = (
+        db.query(
+            day_expression.label("day"),
+            TrafficLog.instance_id.label("traffic_instance_id"),
+            func.coalesce(Instance.identifier, "Unknown").label("instance"),
+            func.coalesce(Instance.name, Instance.identifier, "Unknown").label(
+                "instance_name"
+            ),
+            func.count(TrafficLog.id).label("requests"),
+            func.coalesce(func.sum(traffic_total_bytes()), 0).label("data_bytes"),
+            func.coalesce(func.sum(TrafficLog.processing_time), 0).label(
+                "processing_seconds"
+            ),
+            func.sum(case((TrafficLog.is_success, 1), else_=0)).label("successes"),
+        )
+        .join(Instance, Instance.id == TrafficLog.instance_id)
+        .filter(
+            TrafficLog.timestamp >= start,
+            TrafficLog.timestamp < end,
+            TrafficLog.instance_id.is_not(None),
+        )
+        .group_by(
+            day_expression,
+            TrafficLog.instance_id,
+            Instance.identifier,
+            Instance.name,
+        )
+        .order_by(day_expression, Instance.identifier)
+        .all()
+    )
+
+    recent_request_rows = (
+        db.query(
+            TrafficLog.timestamp,
+            Instance.name.label("instance_name"),
+            Instance.identifier.label("instance_identifier"),
+            TrafficLog.method,
+            TrafficLog.route,
+            TrafficLog.status_code,
+            TrafficLog.request_size,
+            TrafficLog.response_size,
+        )
+        .join(Instance, Instance.id == TrafficLog.instance_id)
+        .filter(TrafficLog.timestamp >= start, TrafficLog.timestamp < end)
+        .order_by(TrafficLog.timestamp.desc(), TrafficLog.id.desc())
+        .limit(50)
+        .all()
+    )
+
+    daily_totals: dict[str, dict[str, int]] = {}
+    instance_totals: dict[str, dict[str, int | float | str]] = {}
+    for row in rows:
+        day = row.day.isoformat() if hasattr(row.day, "isoformat") else str(row.day)
+        daily = daily_totals.setdefault(day, {"requests": 0, "totalDataBytes": 0})
+        daily["requests"] += int(row.requests or 0)
+        daily["totalDataBytes"] += int(row.data_bytes or 0)
+
+        instance = instance_totals.setdefault(
+            row.instance,
+            {
+                "instance": row.instance,
+                "name": row.instance_name,
+                "requests": 0,
+                "totalDataBytes": 0,
+                "processingSeconds": 0.0,
+                "successfulRequests": 0,
+            },
+        )
+        instance["requests"] += int(row.requests or 0)
+        instance["totalDataBytes"] += int(row.data_bytes or 0)
+        instance["processingSeconds"] += float(row.processing_seconds or 0)
+        instance["successfulRequests"] += int(row.successes or 0)
+
+    instances = []
+    for instance in instance_totals.values():
+        requests = int(instance["requests"])
+        instances.append(
+            {
+                "instance": instance["instance"],
+                "name": instance["name"],
+                "requests": requests,
+                "totalDataBytes": int(instance["totalDataBytes"]),
+                "averageResponseTimeMs": round(
+                    float(instance["processingSeconds"]) * 1000 / requests, 2
+                )
+                if requests
+                else 0,
+                "successRate": round(
+                    float(instance["successfulRequests"]) * 100 / requests, 1
+                )
+                if requests
+                else 0,
+            }
+        )
+    instances.sort(key=lambda item: (-item["totalDataBytes"], item["name"].casefold()))
+
+    highest = max(instances, key=lambda item: item["totalDataBytes"], default=None)
+    return {
+        "period": period,
+        "startDate": start.date().isoformat(),
+        "endDate": (end.date() - timedelta(days=1)).isoformat(),
+        "overview": {
+            "totalRequests": sum(item["requests"] for item in daily_totals.values()),
+            "totalDataBytes": sum(
+                item["totalDataBytes"] for item in daily_totals.values()
+            ),
+            "activeInstances": len(instances),
+            "highestTrafficInstance": (
+                {
+                    "name": highest["name"],
+                    "requests": highest["requests"],
+                    "totalDataBytes": highest["totalDataBytes"],
+                }
+                if highest
+                else None
+            ),
+        },
+        "daily": [
+            {"date": day, **totals}
+            for day, totals in sorted(daily_totals.items())
+        ],
+        "dailyByInstance": [
+            {
+                "date": (
+                    row.day.isoformat()
+                    if hasattr(row.day, "isoformat")
+                    else str(row.day)
+                ),
+                "instance": row.instance,
+                "requests": int(row.requests or 0),
+                "totalDataBytes": int(row.data_bytes or 0),
+            }
+            for row in rows
+        ],
+        "recentRequests": [
+            {
+                "timestamp": row.timestamp.isoformat(),
+                "instance": row.instance_identifier,
+                "instanceName": row.instance_name or row.instance_identifier,
+                "method": row.method,
+                "route": row.route,
+                "statusCode": row.status_code,
+                "totalDataBytes": int(row.request_size or 0) + int(row.response_size or 0),
+            }
+            for row in recent_request_rows
+        ],
+        "instances": instances,
+    }
+
+
 @router.get("/api/v1/analytics/traffic/overview")
 def get_traffic_overview(
     period: str = "30d",
@@ -521,13 +703,14 @@ def get_traffic_overview(
     )
     instance_rows = (
         db.query(
+            Instance.id.label("id"),
             func.coalesce(Instance.name, "Unknown").label("name"),
             func.count(TrafficLog.id).label("requests"),
             func.coalesce(func.sum(traffic_total_bytes()), 0).label("data_bytes"),
         )
         .outerjoin(Instance, Instance.id == TrafficLog.instance_id)
         .filter(TrafficLog.timestamp >= start, TrafficLog.timestamp < end)
-        .group_by(Instance.name)
+        .group_by(Instance.id, Instance.name)
         .all()
     )
     highest = max(instance_rows, key=lambda row: row.data_bytes, default=None)
@@ -579,7 +762,11 @@ def get_traffic_daily(
         "period": period,
         "items": [
             {
-                "date": row.day.isoformat(),
+                "date": (
+                    row.day.isoformat()
+                    if hasattr(row.day, "isoformat")
+                    else str(row.day)
+                ),
                 "requests": row.requests,
                 "totalDataBytes": int(row.data_bytes or 0),
             }
@@ -599,6 +786,7 @@ def get_traffic_instances(
     start, end = traffic_date_bounds(period, start_date, end_date)
     rows = (
         db.query(
+            Instance.id.label("id"),
             func.coalesce(Instance.name, "Unknown").label("name"),
             func.count(TrafficLog.id).label("requests"),
             func.coalesce(func.sum(traffic_total_bytes()), 0).label("data_bytes"),
@@ -607,7 +795,7 @@ def get_traffic_instances(
         )
         .outerjoin(Instance, Instance.id == TrafficLog.instance_id)
         .filter(TrafficLog.timestamp >= start, TrafficLog.timestamp < end)
-        .group_by(Instance.name)
+        .group_by(Instance.id, Instance.name)
         .order_by(func.count(TrafficLog.id).desc())
         .all()
     )
@@ -687,6 +875,7 @@ def get_traffic_details(
     start, end = traffic_date_bounds(period, start_date, end_date)
     rows = (
         db.query(
+            Instance.id.label("id"),
             func.coalesce(Instance.name, "Unknown").label("instance"),
             TrafficLog.route.label("route"),
             func.count(TrafficLog.id).label("requests"),
@@ -696,7 +885,7 @@ def get_traffic_details(
         )
         .outerjoin(Instance, Instance.id == TrafficLog.instance_id)
         .filter(TrafficLog.timestamp >= start, TrafficLog.timestamp < end)
-        .group_by(Instance.name, TrafficLog.route)
+        .group_by(Instance.id, Instance.name, TrafficLog.route)
         .order_by(func.sum(traffic_total_bytes()).desc())
         .limit(500)
         .all()
@@ -755,6 +944,7 @@ def receive_sync(
             record = SyncRecord(
                 instance_code=instance_code,
                 modality=data.modality,
+                study_description=data.study_description,
                 processing_created_at=data.processing_created_at,
                 processing_completed_at=data.processing_completed_at,
                 credits_used=1,
@@ -774,9 +964,6 @@ def receive_sync(
         db.add(log)
         db.commit()
 
-        if last_record:
-            db.refresh(last_record)
-
         return {
             "success": True,
             "message": "Data synchronized successfully",
@@ -784,7 +971,7 @@ def receive_sync(
             "record_id": last_record.id if last_record else None
         }
 
-    except Exception:
+    except SQLAlchemyError as error:
         db.rollback()
 
         failed_log = SyncLog(
@@ -794,13 +981,17 @@ def receive_sync(
             message="Failed to store synchronization data"
         )
 
-        db.add(failed_log)
-        db.commit()
+        try:
+            db.add(failed_log)
+            db.commit()
+        except SQLAlchemyError:
+            db.rollback()
+            logger.exception("Unable to persist failed synchronization log")
 
         raise HTTPException(
             status_code=500,
             detail="Failed to synchronize data"
-        )
+        ) from error
 
     
 # ============================================================
@@ -808,17 +999,25 @@ def receive_sync(
 # ============================================================
 
 
-# need changes in the script so wait 
 @router.post("/api/v1/heartbeat")
 def heartbeat(
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    authenticated_key: ApiKey = Depends(verify_api_key),
 ):
-    """
-    Receive heartbeat from a source sync agent.
-    """
+    instance = (
+        db.query(Instance)
+        .filter(Instance.identifier == authenticated_key.key_name)
+        .first()
+    )
+    if instance is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key is not associated with an instance",
+        )
 
+    instance.last_seen_at = datetime.now(timezone.utc)
+    db.commit()
     return {
         "success": True,
         "message": "Heartbeat received"
     }
-

@@ -1,4 +1,72 @@
-@import "tailwindcss";
+@import "tailwindcss/theme.css";
+@import "tailwindcss/utilities.css";
+
+@layer base {
+  *,
+  ::before,
+  ::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    border: 0 solid;
+  }
+
+  html {
+    line-height: 1.5;
+    -webkit-text-size-adjust: 100%;
+    tab-size: 4;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-size: inherit;
+    font-weight: inherit;
+  }
+
+  ul,
+  ol {
+    list-style: none;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    margin: 0;
+    font: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+  }
+
+  button,
+  select {
+    text-transform: none;
+  }
+
+  table {
+    text-indent: 0;
+    border-color: inherit;
+    border-collapse: collapse;
+  }
+
+  img,
+  svg,
+  video,
+  canvas {
+    display: block;
+    vertical-align: middle;
+  }
+
+  img,
+  video {
+    max-width: 100%;
+    height: auto;
+  }
+}
 
 :root {
   font-family: "Aptos", "Segoe UI", sans-serif;
@@ -8,10 +76,9 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   --portal-ink: #142c4c;
-  --portal-muted: #7d93ae;
+  --portal-muted: #536983;
   --portal-border: #dce8f4;
   --portal-blue: #1765e9;
-  --portal-green: #079b72;
 }
 
 * {
@@ -66,23 +133,6 @@ button {
   border-bottom: 1px solid #26364d;
 }
 
-.portal-brand-icon {
-  display: grid;
-  flex: 0 0 auto;
-  place-items: center;
-  width: 37px;
-  height: 37px;
-  border-radius: 11px;
-  background: #254c8c;
-  color: #fff;
-}
-
-.portal-brand-icon svg {
-  width: 22px;
-  height: 22px;
-  fill: currentColor;
-}
-
 .portal-brand-copy strong,
 .portal-brand-copy small {
   display: block;
@@ -112,7 +162,7 @@ button {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 0;
   width: 100%;
   min-height: 41px;
   padding: 0 13px;
@@ -124,13 +174,6 @@ button {
   font-weight: 600;
   text-align: left;
   text-decoration: none;
-  transition: background-color 130ms ease, color 130ms ease;
-}
-
-.portal-nav-link svg {
-  flex: 0 0 auto;
-  width: 17px;
-  height: 17px;
 }
 
 .portal-nav-link:hover {
@@ -141,17 +184,6 @@ button {
 .portal-nav-link.active {
   background: #1d4f91;
   color: #fff;
-}
-
-.portal-nav-link.active::before {
-  position: absolute;
-  top: 6px;
-  bottom: 6px;
-  left: -8px;
-  width: 3px;
-  border-radius: 0 3px 3px 0;
-  background: #62a5ff;
-  content: "";
 }
 
 .portal-sidebar-footer {
@@ -188,7 +220,7 @@ button {
 
 .sync-status.is-synced {
   background: #d9f7ec;
-  color: #058660;
+  color: #047857;
 }
 
 .sync-status.is-failed {
@@ -203,9 +235,7 @@ button {
 
 .dashboard-page,
 .analytics-page {
-  background:
-    radial-gradient(ellipse at 18% 0%, #ffffff 0, #f6faff 34%, transparent 66%),
-    #f0f6fc;
+  background: #f0f6fc;
   color: var(--portal-ink);
 }
 
@@ -224,8 +254,6 @@ button {
 .dashboard-topbar,
 .analytics-topbar {
   border-color: var(--portal-border);
-  border-radius: 11px;
-  box-shadow: 0 5px 18px #43658b12;
 }
 
 .dashboard-topbar {
@@ -243,18 +271,21 @@ button {
   color: var(--portal-muted);
 }
 
+.dashboard-page .text-slate-400,
+.dashboard-page .text-slate-500 {
+  color: #536983;
+}
+
+.dashboard-page .text-emerald-600 {
+  color: #047857;
+}
+
 .dashboard-actions {
   flex-wrap: wrap;
 }
 
 .dashboard-action {
   min-height: 42px;
-  border-radius: 8px;
-  transition: background-color 140ms ease, transform 140ms ease;
-}
-
-.dashboard-action:hover {
-  transform: translateY(-1px);
 }
 
 .dashboard-refresh {
@@ -272,12 +303,12 @@ button {
 .dashboard-logout {
   background: #fff0f2;
   border-color: transparent;
+  color: #be123c;
 }
 
 .dashboard-offline-alert {
   border-color: #ffd6dc;
-  background: linear-gradient(100deg, #fff0f2, #fff8f8);
-  box-shadow: 0 3px 12px #df53610c;
+  background: #fff0f2;
 }
 
 .dashboard-kpi-grid {
@@ -291,13 +322,11 @@ button {
   overflow: hidden;
   border-color: #e1ebf5;
   border-radius: 10px;
-  box-shadow: 0 4px 13px #3b5d8210;
 }
 
 .dashboard-kpi-grid > div > div:first-child {
-  flex-direction: row-reverse;
-  justify-content: space-between;
-  min-height: 36px;
+  justify-content: flex-start;
+  min-height: 24px;
 }
 
 .dashboard-kpi-grid > div > div:first-child span {
@@ -306,23 +335,9 @@ button {
   font-weight: 700;
 }
 
-.dashboard-kpi-grid > div > div:first-child svg {
-  width: 37px;
-  height: 37px;
-  padding: 9px;
-  border-radius: 11px;
-}
-
-.dashboard-kpi-grid > div:nth-child(1) svg { color: #2874ee; background: #eaf2ff; }
-.dashboard-kpi-grid > div:nth-child(2) svg { color: #079a70; background: #e3f8f1; }
-.dashboard-kpi-grid > div:nth-child(3) svg { color: #7550ed; background: #f0ebff; }
-.dashboard-kpi-grid > div:nth-child(4) svg { color: #e8780b; background: #fff2e4; }
-.dashboard-kpi-grid > div:nth-child(5) svg { color: #ed4260; background: #fff0f3; }
-.dashboard-kpi-grid > div:nth-child(6) svg { color: #03a5c9; background: #e4f9fd; }
-
 .dashboard-kpi-grid > div > div:last-child {
   margin-top: 8px;
-  padding-left: 48px;
+  padding-left: 0;
 }
 
 .dashboard-kpi-grid > div > div:last-child p:first-child {
@@ -341,7 +356,6 @@ button {
   border: 1px solid #e1ebf5;
   border-radius: 11px;
   background: #fff;
-  box-shadow: 0 4px 13px #3b5d820c;
 }
 
 .dashboard-instance-list {
@@ -359,7 +373,6 @@ button {
   padding: 11px 14px;
   border-color: #dce8f4;
   border-radius: 9px;
-  box-shadow: none;
 }
 
 .dashboard-instance-head {
@@ -385,7 +398,7 @@ button {
 }
 
 .dashboard-instance-metrics > div span {
-  color: #8297b0;
+  color: #52657d;
   font-size: 10px;
 }
 
@@ -403,7 +416,7 @@ button {
 }
 
 .dashboard-instance-foot p {
-  color: #8297b0;
+  color: #52657d;
   font-size: 10px;
   line-height: 1.4;
 }
@@ -416,7 +429,7 @@ button {
 .dashboard-table th {
   padding: 10px 13px;
   background: #f2f7fc;
-  color: #7088a5;
+  color: #52657d;
   white-space: nowrap;
 }
 
@@ -459,8 +472,7 @@ button {
 .analytics-kpi-card {
   min-height: 91px;
   border-color: #e0eaf4;
-  border-radius: 10px;
-  box-shadow: 0 4px 14px #3b5d8210;
+  border-radius: 4px;
 }
 
 .analytics-kpi-card > div > span:last-child {
@@ -476,13 +488,48 @@ button {
 
 .analytics-chart-card {
   border-color: #e0eaf4;
-  border-radius: 10px;
-  box-shadow: 0 4px 14px #3b5d820c;
+  border-radius: 4px;
 }
 
 .analytics-chart-card h2,
 .analytics-breakdown h2 {
   color: #152f50;
+}
+
+.analytics-mini-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.analytics-chart-label {
+  fill: #64748b;
+  font-size: 9px;
+}
+
+.analytics-chart-legend {
+  display: flex;
+  gap: 14px;
+  padding-left: 30px;
+  color: #52657d;
+  font-size: 10px;
+}
+
+.analytics-chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.analytics-chart-legend i {
+  display: inline-block;
+  width: 12px;
+  height: 2px;
+  background: #1765e9;
+}
+
+.analytics-chart-legend i.credits {
+  background: #16805d;
 }
 
 .analytics-breakdown {
@@ -497,6 +544,309 @@ button {
 .analytics-breakdown th,
 .analytics-breakdown td {
   padding: 10px 13px;
+}
+
+.traffic-page {
+  min-height: 100vh;
+  padding: 14px 20px 28px;
+  background: #f2f7fc;
+}
+
+.traffic-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(100%, 1440px);
+  margin: 0 auto;
+}
+
+.traffic-header,
+.traffic-panel,
+.traffic-chart-card {
+  border: 1px solid #dce8f4;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.traffic-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+}
+
+.traffic-header h1 {
+  margin-top: 4px;
+  color: #112b4c;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.traffic-header p,
+.traffic-back-link {
+  color: #52657d;
+  font-size: 11px;
+}
+
+.traffic-back-link {
+  font-weight: 600;
+}
+
+.traffic-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+}
+
+.traffic-controls label {
+  display: grid;
+  gap: 4px;
+  color: #52657d;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.traffic-controls select,
+.traffic-controls input,
+.traffic-controls button {
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 5px;
+  background: #fff;
+  color: #26384d;
+  font-size: 11px;
+}
+
+.traffic-controls button {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.traffic-controls button:disabled {
+  cursor: default;
+  opacity: .55;
+}
+
+.traffic-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.traffic-summary article {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 11px 13px;
+  border: 1px solid #dce8f4;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.traffic-summary span,
+.traffic-summary small {
+  color: #52657d;
+  font-size: 10px;
+}
+
+.traffic-summary strong {
+  overflow: hidden;
+  color: #142c4c;
+  font-size: 19px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.traffic-chart-card,
+.traffic-panel {
+  padding: 12px 14px;
+}
+
+.traffic-chart-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.traffic-chart-card h2,
+.traffic-panel h2 {
+  color: #152f50;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.traffic-trend-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 190px;
+  max-height: 300px;
+  margin-top: 6px;
+}
+
+.traffic-grid-line {
+  stroke: #e5edf5;
+  stroke-width: 1;
+}
+
+.traffic-axis-label {
+  fill: #64748b;
+  font-size: 10px;
+}
+
+.traffic-request-bar {
+  fill: #1765e9;
+}
+
+.traffic-bytes-bar {
+  fill: #16805d;
+}
+
+.traffic-value-label {
+  fill: #253a54;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.traffic-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-left: 44px;
+  color: #52657d;
+  font-size: 10px;
+}
+
+.traffic-chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.traffic-section-heading {
+  margin-bottom: 9px;
+}
+
+.traffic-section-heading p,
+.traffic-empty,
+.traffic-message {
+  margin-top: 4px;
+  color: #52657d;
+  font-size: 11px;
+}
+
+.traffic-message.is-error {
+  padding: 10px 12px;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.traffic-instance-list {
+  display: grid;
+}
+
+.traffic-instance-row {
+  display: grid;
+  grid-template-columns: minmax(100px, 1.1fr) minmax(90px, 1.8fr) minmax(80px, .8fr) minmax(70px, .65fr) minmax(75px, .8fr) minmax(70px, .7fr);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 38px;
+  padding: 6px 8px;
+  border: 0;
+  border-top: 1px solid #edf2f7;
+  background: #fff;
+  color: #52657d;
+  cursor: pointer;
+  font-size: 10px;
+  text-align: left;
+}
+
+.traffic-instance-row:hover,
+.traffic-instance-row.is-selected {
+  background: #f4f8fd;
+}
+
+.traffic-instance-row strong {
+  color: #142c4c;
+}
+
+.traffic-instance-name {
+  overflow: hidden;
+  color: #142c4c;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.traffic-load-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #e8eff7;
+}
+
+.traffic-load-track i {
+  display: block;
+  height: 100%;
+  background: #1765e9;
+}
+
+.traffic-request-table-wrap {
+  overflow-x: auto;
+}
+
+.traffic-request-table {
+  width: 100%;
+  min-width: 680px;
+  border-collapse: collapse;
+  color: #334155;
+  font-size: 11px;
+  text-align: left;
+}
+
+.traffic-request-table th,
+.traffic-request-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #edf2f7;
+}
+
+.traffic-request-table th {
+  color: #52657d;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.traffic-request-time {
+  white-space: nowrap;
+}
+
+.traffic-request-route {
+  max-width: 420px;
+  overflow-wrap: anywhere;
+}
+
+.traffic-request-route span {
+  display: inline-block;
+  margin-right: 5px;
+  color: #1765e9;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.traffic-status {
+  color: #166534;
+  font-weight: 700;
+}
+
+.traffic-status.is-error {
+  color: #b91c1c;
 }
 
 @media (max-width: 1000px) {
@@ -519,7 +869,6 @@ button {
     top: 0;
     width: 100%;
     height: auto;
-    box-shadow: 0 3px 12px #3b5d8210;
   }
 
   .portal-brand {
@@ -540,15 +889,6 @@ button {
     min-height: 36px;
     padding: 0 6px;
     font-size: 10px;
-  }
-
-  .portal-nav-link.active::before {
-    top: auto;
-    right: 8px;
-    bottom: -7px;
-    left: 8px;
-    width: auto;
-    height: 2px;
   }
 
   .portal-sidebar-footer {
@@ -586,13 +926,35 @@ button {
     padding: 10px;
   }
 
-  .dashboard-kpi-grid > div > div:last-child {
-    padding-left: 0;
-  }
-
   .analytics-topbar > div:last-child {
     flex-wrap: wrap;
     justify-content: space-between;
     width: 100%;
+  }
+
+  .traffic-page {
+    padding: 10px 12px 20px;
+  }
+
+  .traffic-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .traffic-instance-list {
+    overflow-x: auto;
+  }
+
+  .traffic-instance-row {
+    min-width: 680px;
+  }
+
+  .traffic-trend-chart {
+    min-height: 160px;
+  }
+}
+
+@media (min-width: 1100px) {
+  .traffic-chart-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

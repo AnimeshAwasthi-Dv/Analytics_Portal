@@ -10,9 +10,11 @@ from sqlalchemy import (
     String,
     Text,
 )
+from sqlalchemy.orm import validates
 from sqlalchemy.sql import func
 
 from app.database import Base
+from app.security import hash_api_key, is_api_key_hash
 
 
 class User(Base):
@@ -30,7 +32,11 @@ class ApiKey(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     key_name = Column(String, unique=True, nullable=False)
-    api_key = Column(String, nullable=False)
+    api_key = Column(String, nullable=False, index=True)
+
+    @validates("api_key")
+    def hash_api_key_on_assignment(self, _key: str, value: str) -> str:
+        return value if is_api_key_hash(value) else hash_api_key(value)
 
 
 class Instance(Base):
@@ -41,6 +47,7 @@ class Instance(Base):
     identifier = Column(String(120), nullable=False, unique=True)
     status = Column(String(20), nullable=False, default="active")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_seen_at = Column(DateTime(timezone=True), nullable=True)
     updated_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -84,6 +91,8 @@ class SyncRecord(Base):
     )
 
     modality = Column(String(50), nullable=True)
+
+    study_description = Column(Text, nullable=True)
 
     processing_created_at = Column(
         DateTime(timezone=True),

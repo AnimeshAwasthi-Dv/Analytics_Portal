@@ -1,19 +1,12 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import {
-  Database,
-  CheckCircle2,
-  RefreshCw,
-  Coins,
-  AlertOctagon,
-  Radio,
-  ScanLine,
-  Zap,
-  LogOut,
-  ChartNoAxesColumnIncreasing,
-} from "lucide-react";
 import { api } from "../services/api.ts";
-import type { DashboardResponse } from "../types";
+import type { DashboardLoadResult, DashboardResponse } from "../types";
+
+const numberFormatter = new Intl.NumberFormat();
+const timeFormatter = new Intl.DateTimeFormat(undefined, { timeStyle: "medium" });
+const dateTimeFormatter = new Intl.DateTimeFormat();
+const EMPTY_INSTANCES: DashboardResponse["instances"] = [];
 
 interface DashboardPageProps {
   user?: {
@@ -21,52 +14,185 @@ interface DashboardPageProps {
     email?: string;
   };
   onLogout?: () => void;
+  initialDashboardRequest?: Promise<DashboardLoadResult>;
+}
+
+function DashboardLoadingState({
+  syncDataOnly = false,
+  userEmail,
+}: {
+  syncDataOnly?: boolean;
+  userEmail?: string;
+}) {
+  return (
+    <div className="dashboard-page min-h-screen" aria-busy="true">
+      <div
+        className={`dashboard-content mx-auto${syncDataOnly ? " sync-data-only" : ""}`}
+        role="status"
+      >
+        {!syncDataOnly && (
+          <header className="dashboard-topbar border-b border-slate-300 bg-white">
+            <h1 className="text-lg font-bold text-slate-900">
+              Centralized Synchronization Dashboard
+            </h1>
+            <p className="mt-1 text-xs text-slate-600">
+              Live data from the Central Sync Portal database
+            </p>
+            {userEmail && (
+              <p className="mt-1 text-xs text-slate-600">{userEmail}</p>
+            )}
+          </header>
+        )}
+        {syncDataOnly ? (
+          <p id="sync-data" className="py-4 text-sm text-slate-700">
+            Loading synchronized records...
+          </p>
+        ) : (
+          <p className="py-4 text-sm text-slate-700">
+            Loading dashboard data...
+          </p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export const DashboardPage: React.FC<DashboardPageProps> = ({
   user,
   onLogout,
+  initialDashboardRequest,
 }) => {
   const location = useLocation();
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const mountedRef = useRef(false);
+  const activeRequestRef = useRef<Promise<DashboardLoadResult> | null>(null);
+  const activeTaskRef = useRef<Promise<void> | null>(null);
+  const pendingRefreshRef = useRef<{
+    showRefresh: boolean;
+    request?: Promise<DashboardLoadResult>;
+  } | null>(null);
+  const loadDashboardRef = useRef<
+    ((showRefresh?: boolean, request?: Promise<DashboardLoadResult>) => Promise<void>) | null
+  >(null);
+  const initialLoadStartedRef = useRef(false);
+  const lastInitialRequestRef = useRef<Promise<DashboardLoadResult> | undefined>(
+    undefined
+  );
 
-  const loadDashboard = async (showRefresh = false) => {
-    try {
-      if (showRefresh) {
-        setRefreshing(true);
+  const loadDashboard = useCallback((
+    showRefresh = false,
+    request?: Promise<DashboardLoadResult>
+  ) => {
+    if (activeTaskRef.current) {
+      if (request && request === activeRequestRef.current) {
+        return activeTaskRef.current;
       }
 
-      setError("");
+      const pending = pendingRefreshRef.current;
+      pendingRefreshRef.current = {
+        showRefresh: showRefresh || Boolean(pending?.showRefresh),
+        request: request ?? pending?.request,
+      };
 
-      const data = await api.getDashboard();
-
-      setDashboard(data);
-    } catch (err: any) {
-      console.error("Dashboard loading error:", err);
-
-      setError(
-        err?.response?.data?.detail ||
-          "Unable to fetch dashboard data from the server."
-      );
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (showRefresh) {
+        setRefreshing(true);
+        setError("");
+      }
+      return activeTaskRef.current;
     }
-  };
+
+    if (showRefresh) {
+      setRefreshing(true);
+      setError("");
+    }
+
+    const dashboardRequest =
+      request ??
+      api.getDashboard().then(
+        (data): DashboardLoadResult => ({ ok: true, data }),
+        (error: unknown): DashboardLoadResult => ({ ok: false, error })
+      );
+
+    activeRequestRef.current = request ?? dashboardRequest;
+    const task = (async () => {
+      try {
+        const result = await dashboardRequest;
+        if (result.ok === false) {
+          throw result.error;
+        }
+
+        if (mountedRef.current) {
+          setError("");
+          setDashboard(result.data);
+        }
+      } catch (err: any) {
+        console.error("Dashboard loading error:", err);
+
+        if (mountedRef.current) {
+          setError(
+            err?.response?.data?.detail ||
+              "Unable to fetch dashboard data from the server."
+          );
+        }
+      } finally {
+        activeRequestRef.current = null;
+        activeTaskRef.current = null;
+
+        if (mountedRef.current) {
+          setLoading(false);
+          const pending = pendingRefreshRef.current;
+          setRefreshing(Boolean(pending?.showRefresh));
+          pendingRefreshRef.current = null;
+
+          if (pending) {
+            void loadDashboardRef.current?.(pending.showRefresh, pending.request);
+          }
+        } else {
+          pendingRefreshRef.current = null;
+        }
+      }
+    })();
+
+    activeTaskRef.current = task;
+    return task;
+  }, []);
 
   useEffect(() => {
-    loadDashboard();
+    loadDashboardRef.current = loadDashboard;
+    return () => {
+      loadDashboardRef.current = null;
+    };
+  }, [loadDashboard]);
 
-    // Automatically refresh every  1 min seconds
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (initialDashboardRequest) {
+      if (lastInitialRequestRef.current === initialDashboardRequest) return;
+      lastInitialRequestRef.current = initialDashboardRequest;
+      initialLoadStartedRef.current = true;
+      void loadDashboard(false, initialDashboardRequest);
+    } else if (!initialLoadStartedRef.current) {
+      initialLoadStartedRef.current = true;
+      void loadDashboard();
+    }
+  }, [initialDashboardRequest, loadDashboard]);
+
+  useEffect(() => {
     const timer = setInterval(() => {
-      loadDashboard();
+      void loadDashboard();
     }, 60000);
 
     return () => clearInterval(timer);
-  }, []);
+  }, [loadDashboard]);
 
   useEffect(() => {
     if (location.hash !== "#sync-data") return;
@@ -83,7 +209,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       return "—";
     }
 
-    return value.toLocaleString();
+    return numberFormatter.format(value);
   };
 
   const formatLastUpdated = (value: string) => {
@@ -97,31 +223,29 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       return value;
     }
 
-    return date.toLocaleTimeString();
+    return timeFormatter.format(date);
   };
 
   const formatDateTime = (value: string | null) => {
     if (!value) return "-";
 
     const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+    return Number.isNaN(date.getTime()) ? value : dateTimeFormatter.format(date);
   };
+
+  const kpis = dashboard?.kpis;
+  const instances = dashboard?.instances ?? EMPTY_INSTANCES;
+  const offlineInstances = useMemo(
+    () => instances.filter((instance) => instance.status === "Offline"),
+    [instances]
+  );
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="text-center">
-          <RefreshCw className="w-7 h-7 text-blue-600 animate-spin mx-auto mb-3" />
-
-          <p className="text-sm font-semibold text-slate-700">
-            Loading dashboard...
-          </p>
-
-          <p className="text-xs text-slate-400 mt-1">
-            Fetching data from Central Sync Portal
-          </p>
-        </div>
-      </div>
+      <DashboardLoadingState
+        syncDataOnly={location.hash === "#sync-data"}
+        userEmail={user?.email}
+      />
     );
   }
 
@@ -131,8 +255,6 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         <div className="max-w-7xl mx-auto">
           <div className="bg-white border border-rose-200 rounded-xl p-6">
             <div className="flex items-center gap-3">
-              <AlertOctagon className="w-6 h-6 text-rose-600" />
-
               <div>
                 <h2 className="font-bold text-slate-900">
                   Unable to load dashboard
@@ -148,7 +270,6 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               onClick={() => loadDashboard(true)}
               className="mt-5 flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg"
             >
-              <RefreshCw className="w-4 h-4" />
               Try Again
             </button>
           </div>
@@ -156,13 +277,6 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       </div>
     );
   }
-
-  const kpis = dashboard?.kpis;
-  const instances = dashboard?.instances ?? [];
-
-  const offlineInstances = instances.filter(
-    (instance) => instance.status === "Offline"
-  );
 
   return (
     <div className="dashboard-page min-h-screen">
@@ -173,14 +287,10 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       >
 
         {/* HEADER */}
-        <div className="dashboard-topbar rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="dashboard-topbar rounded border border-slate-200 bg-white p-5">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
 
             <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center">
-                <Radio className="w-5 h-5 text-blue-600 animate-pulse" />
-              </div>
-
               <div>
                 <h1 className="text-lg font-bold text-slate-900">
                   Centralized Synchronization Dashboard
@@ -214,12 +324,6 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 disabled={refreshing}
                 className="dashboard-action dashboard-refresh flex items-center gap-2 rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-60"
               >
-                <RefreshCw
-                  className={`w-3.5 h-3.5 ${
-                    refreshing ? "animate-spin" : ""
-                  }`}
-                />
-
                 {refreshing ? "Refreshing..." : "Refresh"}
               </button>
 
@@ -227,7 +331,6 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 to="/analytics"
                 className="dashboard-action dashboard-analytics flex items-center gap-2 rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200"
               >
-                <ChartNoAxesColumnIncreasing className="h-4 w-4" />
                 Analytics
               </Link>
 
@@ -236,7 +339,6 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   onClick={onLogout}
                   className="dashboard-action dashboard-logout flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-100"
                 >
-                  <LogOut className="w-3.5 h-3.5" />
                   Logout
                 </button>
               )}
@@ -257,8 +359,6 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         {offlineInstances.length > 0 && (
           <div className="dashboard-offline-alert rounded-xl border border-rose-200 bg-rose-50 p-4">
             <div className="flex items-center gap-3">
-              <AlertOctagon className="w-5 h-5 text-rose-600" />
-
               <div>
                 <p className="text-sm font-bold text-rose-900">
                   {offlineInstances.length} instance
@@ -277,16 +377,15 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         )}
 
         {/* KPI CARDS */}
-        <div className="dashboard-kpi-grid grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
+        <div className="dashboard-kpi-grid grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
 
           {/* TOTAL INSTANCES */}
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <div className="bg-white p-4 rounded border border-slate-200">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-slate-500">
                 Total Instances
               </span>
 
-              <Database className="w-4 h-4 text-blue-600" />
             </div>
 
             <div className="mt-3">
@@ -301,13 +400,12 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           </div>
 
           {/* ONLINE */}
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <div className="bg-white p-4 rounded border border-slate-200">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-slate-500">
                 Online
               </span>
 
-              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
             </div>
 
             <div className="mt-3">
@@ -326,13 +424,12 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           </div>
 
           {/* RECORDS */}
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <div className="bg-white p-4 rounded border border-slate-200">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-slate-500">
                 Records Synced
               </span>
 
-              <RefreshCw className="w-4 h-4 text-indigo-600" />
             </div>
 
             <div className="mt-3">
@@ -346,52 +443,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             </div>
           </div>
 
-          {/* CREDITS */}
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-500">Credits Used</span>
-
-              <Coins className="w-4 h-4 text-amber-600" />
-            </div>
-
-            <div className="mt-3">
-              <p className="text-2xl font-bold text-amber-600 font-mono">
-                {formatNumber(kpis?.totalCredits)}
-              </p>
-
-              <p className="text-[11px] text-slate-400 mt-1">
-                From saved sync payloads
-              </p>
-            </div>
-          </div>
-
-          {/* FAILED */}
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-500">
-                Failed Syncs
-              </span>
-
-              <AlertOctagon className="w-4 h-4 text-rose-600" />
-            </div>
-
-            <div className="mt-3">
-              <p className="text-2xl font-bold text-rose-600 font-mono">
-                {formatNumber(kpis?.failedSyncs)}
-              </p>
-
-              <p className="text-[11px] text-slate-400 mt-1">
-                Failed sync events
-              </p>
-            </div>
-          </div>
-
           {/* MODALITIES */}
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+          <div className="bg-white p-4 rounded border border-slate-200">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-slate-500">Modalities</span>
 
-              <ScanLine className="w-4 h-4 text-cyan-600" />
             </div>
 
             <div className="mt-3">
@@ -411,7 +467,6 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
-              <Zap className="w-4 h-4 text-blue-600" />
               Database Instance Health
             </h2>
 
@@ -423,8 +478,6 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
           {instances.length === 0 ? (
             <div className="bg-white border border-slate-200 rounded-xl p-8 text-center">
-              <Database className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-
               <p className="text-sm font-semibold text-slate-600">
                 No database instances found
               </p>
@@ -443,7 +496,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 return (
                   <div
                     key={instance.id}
-                    className={`dashboard-instance-row rounded-xl border bg-white p-4 shadow-sm ${
+                    className={`dashboard-instance-row rounded-xl border bg-white p-4 ${
                       isOnline
                         ? "border-slate-200"
                         : isDelayed
@@ -465,7 +518,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                       </div>
 
                       <span
-                        className={`text-[10px] font-bold px-2 py-1 rounded-full flex items-center gap-1 ${
+                        className={`text-[10px] font-bold px-2 py-1 rounded ${
                           isOnline
                             ? "bg-emerald-100 text-emerald-700"
                             : isDelayed
@@ -473,16 +526,6 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                             : "bg-rose-100 text-rose-700"
                         }`}
                       >
-                        <span
-                          className={`w-1.5 h-1.5 rounded-full ${
-                            isOnline
-                              ? "bg-emerald-600"
-                              : isDelayed
-                              ? "bg-amber-600"
-                              : "bg-rose-600"
-                          }`}
-                        />
-
                         {instance.status}
                       </span>
                     </div>
@@ -565,12 +608,13 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   </div>
 
   <div className="dashboard-table-shell overflow-x-auto rounded-xl border border-slate-200 bg-white">
-    <table className="dashboard-table w-full min-w-[850px] text-left text-xs">
+    <table className="dashboard-table w-full min-w-[1000px] text-left text-xs">
       <thead className="border-b border-slate-200 bg-slate-50 text-slate-500">
         <tr>
           <th className="px-4 py-3 font-semibold">Record</th>
           <th className="px-4 py-3 font-semibold">Instance</th>
           <th className="px-4 py-3 font-semibold">Modality</th>
+          <th className="px-4 py-3 font-semibold">Study description</th>
           <th className="px-4 py-3 font-semibold">Processing started</th>
           <th className="px-4 py-3 font-semibold">Processing completed</th>
           <th className="px-4 py-3 font-semibold">Credits</th>
@@ -592,6 +636,10 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
             <td className="px-4 py-3 font-semibold">
               {record.modality ?? "-"}
+            </td>
+
+            <td className="px-4 py-3">
+              {record.studyDescription?.trim() || "-"}
             </td>
 
             <td className="px-4 py-3">

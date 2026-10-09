@@ -1,36 +1,208 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  Activity,
-  ArrowDownWideNarrow,
-  ArrowUpWideNarrow,
-  Database,
-  RefreshCw,
-  TriangleAlert,
-} from "lucide-react";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+  api,
+  type DailyInstanceTraffic,
+  type DailyTraffic,
+  type TrafficAnalyticsData,
+  type TrafficPeriod,
+} from "../services/api.ts";
+import { Link } from "react-router-dom";
 
-import { api, type TrafficAnalyticsData, type TrafficPeriod } from "../services/api.ts";
+type Granularity = "daily" | "weekly" | "monthly";
+type TrendPoint = {
+  key: string;
+  label: string;
+  requests: number;
+  totalDataBytes: number;
+};
+
+const numberFormat = new Intl.NumberFormat();
 
 function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes.toLocaleString()} B`;
+  if (bytes < 1024) return `${numberFormat.format(bytes)} B`;
   const units = ["KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let unitIndex = -1;
-  do {
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
     value /= 1024;
-    unitIndex += 1;
-  } while (value >= 1024 && unitIndex < units.length - 1);
-  return `${value.toFixed(value >= 100 ? 0 : 1)} ${units[unitIndex]}`;
+    unit += 1;
+  }
+  return `${value.toFixed(value >= 100 ? 0 : 1)} ${units[unit]}`;
+}
+
+function startOfPeriod(date: Date, granularity: Granularity): Date {
+  const result = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  if (granularity === "weekly") {
+    result.setUTCDate(result.getUTCDate() - ((result.getUTCDay() + 6) % 7));
+  } else if (granularity === "monthly") {
+    result.setUTCDate(1);
+  }
+  return result;
+}
+
+function makeTrend(
+  overall: DailyTraffic[],
+  byInstance: DailyInstanceTraffic[],
+  instance: string,
+  granularity: Granularity,
+  firstDate: string,
+  lastDate: string
+): TrendPoint[] {
+  if (!firstDate || !lastDate) return [];
+
+  const totals = new Map<string, Omit<TrendPoint, "key" | "label">>();
+  const rows = instance === "ALL"
+    ? overall
+    : byInstance.filter((row) => row.instance === instance);
+
+  for (const row of rows) {
+    const date = new Date(`${row.date}T00:00:00Z`);
+    if (Number.isNaN(date.getTime())) continue;
+    const key = startOfPeriod(date, granularity).toISOString().slice(0, 10);
+    const value = totals.get(key) ?? { requests: 0, totalDataBytes: 0 };
+    value.requests += row.requests;
+    value.totalDataBytes += row.totalDataBytes;
+    totals.set(key, value);
+  }
+
+  const cursor = startOfPeriod(new Date(`${firstDate}T00:00:00Z`), granularity);
+  const end = startOfPeriod(new Date(`${lastDate}T00:00:00Z`), granularity);
+  const points: TrendPoint[] = [];
+
+  while (cursor <= end) {
+    const key = cursor.toISOString().slice(0, 10);
+    const label =
+      granularity === "monthly"
+        ? cursor.toLocaleDateString(undefined, { month: "short", year: "2-digit", timeZone: "UTC" })
+        : cursor.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+    points.push({
+      key,
+      label,
+      ...(totals.get(key) ?? { requests: 0, totalDataBytes: 0 }),
+    });
+    if (granularity === "daily") cursor.setUTCDate(cursor.getUTCDate() + 1);
+    else if (granularity === "weekly") cursor.setUTCDate(cursor.getUTCDate() + 7);
+    else cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  return points;
+}
+
+function TrafficMetricChart({
+  title,
+  points,
+  metric,
+}: {
+  title: string;
+  points: TrendPoint[];
+  metric: "requests" | "totalDataBytes";
+}) {
+  const width = 900;
+  const height = 250;
+  const left = 58;
+  const right = 12;
+  const top = 16;
+  const bottom = 38;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const maximum = Math.max(1, ...points.map((point) => point[metric]));
+  const ceiling = maximum + (maximum < 5 ? 1 : Math.ceil(maximum * 0.12));
+  const slotWidth = points.length ? plotWidth / points.length : plotWidth;
+  const barWidth = Math.max(3, Math.min(24, slotWidth * 0.62));
+  const formatValue =
+    metric === "requests"
+      ? (value: number) => numberFormat.format(value)
+      : formatBytes;
+
+  return (
+    <article className="traffic-chart-card">
+      <h2>{title}</h2>
+      {points.some((point) => point[metric] > 0) ? (
+        <svg
+          className="traffic-trend-chart"
+          viewBox={`0 0 ${width} ${height}`}
+          role="img"
+          aria-label={`${title} bar chart`}
+        >
+          {[0, 0.5, 1].map((fraction) => {
+            const y = top + plotHeight * fraction;
+            const value = Math.round(ceiling * (1 - fraction));
+            return (
+              <g key={fraction}>
+                <line
+                  x1={left}
+                  y1={y}
+                  x2={width - right}
+                  y2={y}
+                  className="traffic-grid-line"
+                />
+                <text
+                  x={left - 9}
+                  y={y + 4}
+                  textAnchor="end"
+                  className="traffic-axis-label"
+                >
+                  {formatValue(value)}
+                </text>
+              </g>
+            );
+          })}
+          {points.map((point, index) => {
+            const value = point[metric];
+            const barHeight = (value / ceiling) * plotHeight;
+            const x = left + slotWidth * index + (slotWidth - barWidth) / 2;
+            const y = top + plotHeight - barHeight;
+            const labelStep = Math.max(1, Math.ceil(points.length / 8));
+            const showLabel =
+              index === 0 ||
+              index === points.length - 1 ||
+              index % labelStep === 0;
+            return (
+              <g key={point.key}>
+                <rect
+                  x={x}
+                  y={value ? y : top + plotHeight - 1}
+                  width={barWidth}
+                  height={value ? Math.max(2, barHeight) : 1}
+                  rx="2"
+                  className={metric === "requests" ? "traffic-request-bar" : "traffic-bytes-bar"}
+                >
+                  <title>{`${point.label}: ${formatValue(value)}`}</title>
+                </rect>
+                {value > 0 && (
+                  <text
+                    x={x + barWidth / 2}
+                    y={Math.max(top + 10, y - 5)}
+                    textAnchor="middle"
+                    className="traffic-value-label"
+                  >
+                    {formatValue(value)}
+                  </text>
+                )}
+                {showLabel && (
+                  <text
+                    x={x + barWidth / 2}
+                    y={height - 12}
+                    textAnchor="middle"
+                    className="traffic-axis-label"
+                  >
+                    {point.label}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+        </svg>
+      ) : (
+        <p className="traffic-empty">No {metric === "requests" ? "requests" : "data transfer"} in this date range.</p>
+      )}
+    </article>
+  );
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error && error.message
+    ? error.message
+    : "Unable to load traffic analytics.";
 }
 
 export function TrafficAnalyticsPage() {
@@ -38,114 +210,91 @@ export function TrafficAnalyticsPage() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [refreshCount, setRefreshCount] = useState(0);
+  const [granularity, setGranularity] = useState<Granularity>("daily");
+  const [selectedInstance, setSelectedInstance] = useState("ALL");
   const [analytics, setAnalytics] = useState<TrafficAnalyticsData | null>(null);
-  const [loadedRequest, setLoadedRequest] = useState("");
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const customRangeReady = period !== "custom" || Boolean(startDate && endDate);
-  const requestKey = `${period}:${startDate}:${endDate}:${refreshCount}`;
-  const loading = customRangeReady && loadedRequest !== requestKey;
+  const customRange = period === "custom";
+  const invalidRange = customRange && Boolean(startDate && endDate && startDate > endDate);
+  const datesReady = !customRange || Boolean(startDate && endDate && !invalidRange);
 
   useEffect(() => {
-    if (!customRangeReady) return;
-
+    if (!datesReady) return;
     let cancelled = false;
-    void api
-      .getTrafficAnalytics({ period, startDate, endDate })
-      .then((result) => {
-        if (cancelled) return;
-        setAnalytics(result);
-        setError("");
-      })
-      .catch((requestError: unknown) => {
-        if (cancelled) return;
-        const message = requestError as {
-          response?: { data?: { detail?: string } };
-          message?: string;
-        };
-        setError(
-          message.response?.data?.detail ??
-            message.message ??
-            "Unable to load traffic analytics."
-        );
-      })
-      .finally(() => {
-        if (!cancelled) setLoadedRequest(requestKey);
-      });
 
+    async function loadAnalytics() {
+      setLoading(true);
+      setError("");
+      try {
+        const result = await api.getTrafficAnalytics({
+          period,
+          startDate: customRange ? startDate : "",
+          endDate: customRange ? endDate : "",
+        });
+        if (!cancelled) {
+          setAnalytics(result);
+          setSelectedInstance((current) =>
+            current !== "ALL" && !result.instances.some((row) => row.instance === current)
+              ? "ALL"
+              : current
+          );
+        }
+      } catch (requestError: unknown) {
+        if (!cancelled) setError(getErrorMessage(requestError));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    void loadAnalytics();
     return () => {
       cancelled = true;
     };
-  }, [customRangeReady, endDate, period, requestKey, startDate]);
+  }, [period, startDate, endDate, refreshCount, datesReady, customRange]);
 
-  const summary = analytics?.overview;
-  const cards = [
-    {
-      label: "Total requests",
-      value: summary?.totalRequests.toLocaleString() ?? "0",
-      detail: "Requests in selected range",
-      icon: Activity,
-      tone: "text-cyan-700 bg-cyan-50",
-    },
-    {
-      label: "Total data",
-      value: formatBytes(summary?.totalDataBytes ?? 0),
-      detail: "Request and response bytes",
-      icon: Database,
-      tone: "text-emerald-700 bg-emerald-50",
-    },
-    {
-      label: "Highest traffic instance",
-      value: summary?.highestTrafficInstance?.name ?? "No traffic",
-      detail: summary?.highestTrafficInstance
-        ? formatBytes(summary.highestTrafficInstance.totalDataBytes)
-        : "No instance traffic in range",
-      icon: ArrowUpWideNarrow,
-      tone: "text-amber-700 bg-amber-50",
-    },
-    {
-      label: "Active instances",
-      value: summary?.activeInstances.toLocaleString() ?? "0",
-      detail: summary?.lowestTrafficInstance
-        ? `Lowest: ${summary.lowestTrafficInstance.name} (${formatBytes(summary.lowestTrafficInstance.totalDataBytes)})`
-        : "Instances with requests in range",
-      icon: ArrowDownWideNarrow,
-      tone: "text-blue-700 bg-blue-50",
-    },
-  ];
-
-  const dailyChart = (analytics?.daily ?? []).map((row) => ({
-    ...row,
-    dataMB: row.totalDataBytes / (1024 * 1024),
-  }));
-  const instanceChart = (analytics?.instances ?? []).map((row) => ({
-    ...row,
-    dataMB: row.totalDataBytes / (1024 * 1024),
-  }));
-  const routeChart = (analytics?.routes ?? []).slice(0, 10).map((row) => ({
-    ...row,
-    dataMB: row.totalDataBytes / (1024 * 1024),
-    routeLabel: row.route,
-  }));
-  const routeHighlights = analytics?.routeHighlights;
+  const overview = analytics?.overview;
+  const instances = analytics?.instances ?? [];
+  const selected = instances.find((row) => row.instance === selectedInstance);
+  const dailyTrend = useMemo(
+    () =>
+      analytics
+        ? makeTrend(
+            analytics.daily,
+            analytics.dailyByInstance,
+            selectedInstance,
+            granularity,
+            analytics.startDate,
+            analytics.endDate
+          )
+        : [],
+    [analytics, granularity, selectedInstance]
+  );
+  const maxBytes = Math.max(1, ...instances.map((row) => row.totalDataBytes));
+  const displayName = selected?.name ?? "All instances";
+  const displayRequests = selected?.requests ?? overview?.totalRequests ?? 0;
+  const displayBytes = selected?.totalDataBytes ?? overview?.totalDataBytes ?? 0;
+  const displayResponse = selected
+    ? `${selected.averageResponseTimeMs.toLocaleString()} ms`
+    : "Overall";
+  const recentRequests = (analytics?.recentRequests ?? []).filter(
+    (request) =>
+      selectedInstance === "ALL" || request.instance === selectedInstance
+  );
 
   return (
-    <main className="min-h-screen bg-slate-50 p-5 sm:p-6">
-      <div className="mx-auto max-w-7xl space-y-5">
-        <header className="flex flex-wrap items-end justify-between gap-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <main className="traffic-page">
+      <div className="traffic-content">
+        <header className="traffic-header">
           <div>
-            <p className="text-xs font-semibold uppercase text-emerald-700">Monitoring</p>
-            <h1 className="mt-1 text-xl font-bold text-slate-900">Traffic analytics</h1>
-            <p className="mt-1 text-xs text-slate-500">Request volume and data transfer by source and route</p>
+            <Link to="/dashboard" className="traffic-back-link">Back to dashboard</Link>
+            <h1>Traffic analytics</h1>
+            <p>Request volume and data transferred by instance and time.</p>
           </div>
-          <div className="flex flex-wrap items-end gap-2">
-            <label className="text-[11px] font-semibold text-slate-600">
+          <div className="traffic-controls">
+            <label>
               Date range
-              <select
-                value={period}
-                onChange={(event) => setPeriod(event.target.value as TrafficPeriod)}
-                className="mt-1 block rounded-md border border-slate-300 bg-white px-2 py-2 text-xs text-slate-800"
-              >
+              <select value={period} onChange={(event) => setPeriod(event.target.value as TrafficPeriod)}>
                 <option value="today">Today</option>
                 <option value="yesterday">Yesterday</option>
                 <option value="7d">Last 7 days</option>
@@ -153,160 +302,143 @@ export function TrafficAnalyticsPage() {
                 <option value="custom">Custom</option>
               </select>
             </label>
-            {period === "custom" && (
+            {customRange && (
               <>
-                <label className="text-[11px] font-semibold text-slate-600">
-                  From
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(event) => setStartDate(event.target.value)}
-                    className="mt-1 block rounded-md border border-slate-300 bg-white px-2 py-[7px] text-xs text-slate-800"
-                  />
-                </label>
-                <label className="text-[11px] font-semibold text-slate-600">
-                  To
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={(event) => setEndDate(event.target.value)}
-                    className="mt-1 block rounded-md border border-slate-300 bg-white px-2 py-[7px] text-xs text-slate-800"
-                  />
-                </label>
+                <label>From<input type="date" value={startDate} max={endDate || undefined} onChange={(event) => setStartDate(event.target.value)} /></label>
+                <label>To<input type="date" value={endDate} min={startDate || undefined} onChange={(event) => setEndDate(event.target.value)} /></label>
               </>
             )}
-            <button
-              type="button"
-              title="Refresh traffic analytics"
-              aria-label="Refresh traffic analytics"
-              onClick={() => setRefreshCount((count) => count + 1)}
-              disabled={loading}
-              className="grid h-9 w-9 place-items-center rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-60"
-            >
-              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            <label>
+              Group by
+              <select value={granularity} onChange={(event) => setGranularity(event.target.value as Granularity)}>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+              </select>
+            </label>
+            <label>
+              Instance
+              <select value={selectedInstance} onChange={(event) => setSelectedInstance(event.target.value)}>
+                <option value="ALL">All instances</option>
+                {instances.map((row) => (
+                  <option key={row.instance} value={row.instance}>{row.name}</option>
+                ))}
+              </select>
+            </label>
+            <button type="button" onClick={() => setRefreshCount((count) => count + 1)} disabled={loading || !datesReady}>
+              Refresh
             </button>
           </div>
         </header>
 
-        {error && !loading && (
-          <div role="alert" className="flex items-start gap-3 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
-            <TriangleAlert className="mt-0.5 h-5 w-5 shrink-0" />
-            <div><strong>Traffic analytics unavailable</strong><p className="mt-1">{error}</p></div>
-          </div>
+        {invalidRange && <p className="traffic-message" role="alert">Start date must be on or before end date.</p>}
+        {customRange && datesReady === false && !invalidRange && (
+          <p className="traffic-message">Choose a start and end date to load traffic.</p>
         )}
+        {error && <p className="traffic-message is-error" role="alert">{error}</p>}
 
-        {period === "custom" && (!startDate || !endDate) && (
-          <p className="text-sm text-slate-500">Select both dates to load traffic data.</p>
-        )}
-
-        <section aria-label="Traffic summary" className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {cards.map(({ label, value, detail, icon: Icon, tone }) => (
-            <article key={label} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-xs font-medium text-slate-500">{label}</span>
-                <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-md ${tone}`}><Icon className="h-4 w-4" /></span>
-              </div>
-              <p className="mt-3 truncate text-xl font-bold text-slate-900" title={value}>{loading ? "..." : value}</p>
-              <p className="mt-1 text-[11px] text-slate-500">{detail}</p>
-            </article>
-          ))}
+        <section className="traffic-summary" aria-label="Traffic summary">
+          <article><span>Requests</span><strong>{loading ? "…" : numberFormat.format(displayRequests)}</strong><small>{selected ? displayName : "All instances in range"}</small></article>
+          <article><span>Data transferred</span><strong>{loading ? "…" : formatBytes(displayBytes)}</strong><small>Request + response bytes</small></article>
+          <article><span>Active instances</span><strong>{loading ? "…" : numberFormat.format(overview?.activeInstances ?? 0)}</strong><small>With recorded traffic</small></article>
+          <article><span>Average response</span><strong>{loading ? "…" : displayResponse}</strong><small>{selected ? "Selected instance" : "Select an instance for its average"}</small></article>
         </section>
 
-        {loading ? (
-          <div className="rounded-xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-500">
-            <RefreshCw className="mx-auto mb-3 h-6 w-6 animate-spin text-emerald-700" />Loading traffic data...
-          </div>
-        ) : (
+        {loading && !analytics ? (
+          <p className="traffic-panel" role="status">Loading traffic data…</p>
+        ) : analytics && !error ? (
           <>
-            <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-              <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <h2 className="mb-4 text-sm font-bold text-slate-900">Daily traffic trend</h2>
-                <div className="h-72">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={dailyChart} margin={{ top: 4, right: 16, bottom: 4, left: 8 }}>
-                      <CartesianGrid stroke="#e8ede9" vertical={false} />
-                      <XAxis dataKey="date" tickLine={false} axisLine={false} />
-                      <YAxis yAxisId="requests" allowDecimals={false} tickLine={false} axisLine={false} />
-                      <YAxis yAxisId="data" orientation="right" tickLine={false} axisLine={false} />
-                      <Tooltip />
-                      <Line yAxisId="requests" type="monotone" dataKey="requests" name="Requests" stroke="#197455" strokeWidth={2} dot={false} />
-                      <Line yAxisId="data" type="monotone" dataKey="dataMB" name="Data (MB)" stroke="#c47a28" strokeWidth={2} dot={false} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </article>
-
-              <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <h2 className="mb-4 text-sm font-bold text-slate-900">Data volume by instance</h2>
-                <div className="h-72">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={instanceChart} margin={{ top: 4, right: 16, bottom: 4, left: 8 }}>
-                      <CartesianGrid stroke="#e8ede9" vertical={false} />
-                      <XAxis dataKey="instance" tickLine={false} axisLine={false} />
-                      <YAxis tickLine={false} axisLine={false} />
-                      <Tooltip formatter={(value) => [`${Number(value).toFixed(2)} MB`, "Data"]} />
-                      <Bar dataKey="dataMB" name="Data (MB)" fill="#277d8a" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </article>
-
-              <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm xl:col-span-2">
-                <h2 className="mb-4 text-sm font-bold text-slate-900">Routes by data volume</h2>
-                <div className="mb-3 grid grid-cols-1 gap-1 text-[11px] text-slate-500 sm:grid-cols-2">
-                  <p>Most data: {routeHighlights?.highestTrafficRoute?.route ?? "None"} ({formatBytes(routeHighlights?.highestTrafficRoute?.totalDataBytes ?? 0)})</p>
-                  <p>Least data: {routeHighlights?.lowestTrafficRoute?.route ?? "None"} ({formatBytes(routeHighlights?.lowestTrafficRoute?.totalDataBytes ?? 0)})</p>
-                  <p>Most requests: {routeHighlights?.mostRequestsRoute?.route ?? "None"} ({routeHighlights?.mostRequestsRoute?.requests.toLocaleString() ?? 0})</p>
-                  <p>Fewest requests: {routeHighlights?.fewestRequestsRoute?.route ?? "None"} ({routeHighlights?.fewestRequestsRoute?.requests.toLocaleString() ?? 0})</p>
-                </div>
-                <div className="h-72">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={routeChart} margin={{ top: 4, right: 16, bottom: 36, left: 8 }}>
-                      <CartesianGrid stroke="#e8ede9" vertical={false} />
-                      <XAxis dataKey="routeLabel" interval={0} angle={-25} textAnchor="end" height={68} tickLine={false} axisLine={false} />
-                      <YAxis tickLine={false} axisLine={false} />
-                      <Tooltip formatter={(value) => [`${Number(value).toFixed(2)} MB`, "Data"]} />
-                      <Bar dataKey="dataMB" name="Data (MB)" fill="#bd812a" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </article>
+            <section className="traffic-chart-grid" aria-label="Traffic over time">
+              <TrafficMetricChart
+                title={`${granularity[0].toUpperCase()}${granularity.slice(1)} requests · ${displayName}`}
+                points={dailyTrend}
+                metric="requests"
+              />
+              <TrafficMetricChart
+                title={`${granularity[0].toUpperCase()}${granularity.slice(1)} data transferred · ${displayName}`}
+                points={dailyTrend}
+                metric="totalDataBytes"
+              />
             </section>
-
-            <section className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-              <div className="border-b border-slate-200 px-4 py-3">
-                <h2 className="text-sm font-bold text-slate-900">Instance and route breakdown</h2>
+            <section className="traffic-panel">
+              <div className="traffic-section-heading">
+                <div>
+                  <h2>Load by instance</h2>
+                  <p>Select an instance to inspect its time trend above.</p>
+                </div>
               </div>
-              <table className="w-full min-w-[760px] text-left text-xs">
-                <thead className="bg-slate-50 text-slate-500">
-                  <tr>
-                    <th className="px-4 py-3 font-semibold">Instance</th>
-                    <th className="px-4 py-3 font-semibold">Route</th>
-                    <th className="px-4 py-3 font-semibold">Requests</th>
-                    <th className="px-4 py-3 font-semibold">Total data</th>
-                    <th className="px-4 py-3 font-semibold">Avg response</th>
-                    <th className="px-4 py-3 font-semibold">Success rate</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {(analytics?.details ?? []).map((row) => (
-                    <tr key={`${row.instance}-${row.route}`} className="text-slate-700">
-                      <td className="px-4 py-3 font-semibold">{row.instance}</td>
-                      <td className="px-4 py-3 font-mono">{row.route}</td>
-                      <td className="px-4 py-3">{row.requests.toLocaleString()}</td>
-                      <td className="px-4 py-3">{formatBytes(row.totalDataBytes)}</td>
-                      <td className="px-4 py-3">{row.averageResponseTimeMs.toLocaleString()} ms</td>
-                      <td className="px-4 py-3">{row.successRate.toFixed(1)}%</td>
-                    </tr>
+              {instances.length ? (
+                <div className="traffic-instance-list">
+                  {instances.map((row) => (
+                    <button
+                      type="button"
+                      key={row.instance}
+                      className={`traffic-instance-row${selectedInstance === row.instance ? " is-selected" : ""}`}
+                      onClick={() => setSelectedInstance((current) => current === row.instance ? "ALL" : row.instance)}
+                    >
+                      <span className="traffic-instance-name" title={row.name}>{row.name}</span>
+                      <span className="traffic-load-track" aria-label={`${Math.round((row.totalDataBytes / maxBytes) * 100)} percent of largest instance data load`}>
+                        <i style={{ width: `${(row.totalDataBytes / maxBytes) * 100}%` }} />
+                      </span>
+                      <span>{numberFormat.format(row.requests)} requests</span>
+                      <strong>{formatBytes(row.totalDataBytes)}</strong>
+                      <span>{row.averageResponseTimeMs.toLocaleString()} ms avg</span>
+                      <span>{row.successRate.toFixed(1)}% success</span>
+                    </button>
                   ))}
-                  {!analytics?.details.length && (
-                    <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">No traffic recorded for this range.</td></tr>
-                  )}
-                </tbody>
-              </table>
+                </div>
+              ) : (
+                <p className="traffic-empty">No instance traffic in this date range.</p>
+              )}
+            </section>
+            <section className="traffic-panel">
+              <div className="traffic-section-heading">
+                <div>
+                  <h2>Recent request times</h2>
+                  <p>Latest recorded requests in this date range, shown in your local time.</p>
+                </div>
+              </div>
+              {recentRequests.length ? (
+                <div className="traffic-request-table-wrap">
+                  <table className="traffic-request-table">
+                    <thead>
+                      <tr>
+                        <th>Time</th>
+                        <th>Instance</th>
+                        <th>Request</th>
+                        <th>Status</th>
+                        <th>Data</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {recentRequests.map((request, index) => (
+                          <tr key={`${request.timestamp}-${request.route}-${index}`}>
+                            <td className="traffic-request-time">
+                              {new Date(request.timestamp).toLocaleString()}
+                            </td>
+                            <td>{request.instanceName}</td>
+                            <td className="traffic-request-route">
+                              <span>{request.method}</span> {request.route}
+                            </td>
+                            <td>
+                              <span className={`traffic-status${request.statusCode >= 400 ? " is-error" : ""}`}>
+                                {request.statusCode}
+                              </span>
+                            </td>
+                            <td>{formatBytes(request.totalDataBytes)}</td>
+                          </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="traffic-empty">No identified requests in this date range.</p>
+              )}
             </section>
           </>
-        )}
+        ) : !error ? (
+          <p className="traffic-panel">Select a valid date range to view traffic.</p>
+        ) : null}
       </div>
     </main>
   );

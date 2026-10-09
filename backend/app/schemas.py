@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 
 
@@ -19,6 +19,7 @@ class UserResponse(BaseModel):
 
 class SyncPayload(BaseModel):
     modality: Optional[str] = None
+    study_description: Optional[str] = None
     processing_created_at: Optional[datetime] = None
     processing_completed_at: Optional[datetime] = None
-    credits_used: int = 0
+    credits_used: int = Field(default=0, ge=0)

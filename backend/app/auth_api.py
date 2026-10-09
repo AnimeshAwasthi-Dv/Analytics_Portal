@@ -1,10 +1,12 @@
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import ApiKey, Instance
+from app.security import API_KEY_HASH_PREFIX, hash_api_key
 
 security = HTTPBearer()
 
@@ -16,18 +18,28 @@ def verify_api_key(
 ):
     api_key = credentials.credentials
 
-    stored_key = (
+    matching_keys = (
         db.query(ApiKey)
-        .filter(ApiKey.api_key == api_key)
-        .first()
+        .filter(
+            or_(
+                ApiKey.api_key == hash_api_key(api_key),
+                and_(
+                    ApiKey.api_key.not_like(f"{API_KEY_HASH_PREFIX}%"),
+                    ApiKey.api_key == api_key,
+                ),
+            )
+        )
+        .limit(2)
+        .all()
     )
 
-    if not stored_key:
+    if len(matching_keys) != 1:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key"
         )
 
+    stored_key = matching_keys[0]
     instance = (
         db.query(Instance)
         .filter(Instance.identifier == stored_key.key_name)

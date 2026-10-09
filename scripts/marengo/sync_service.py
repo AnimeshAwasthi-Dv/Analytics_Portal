@@ -354,6 +354,8 @@ def fetch_study_payload(study_id):
 
                 "modality": row["modality"],
 
+                "study_description": row["investigation_name"],
+
                 "processing_created_at": (
                     row["processing_created_at"].isoformat()
                     if row["processing_created_at"]
