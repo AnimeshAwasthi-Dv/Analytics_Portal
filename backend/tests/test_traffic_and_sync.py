@@ -123,6 +123,17 @@ class TrafficAndSyncTests(unittest.TestCase):
         self.assertEqual(summary["overview"]["activeInstances"], 2)
         self.assertEqual(len(summary["daily"]), 1)
         self.assertEqual(len(summary["dailyByInstance"]), 2)
+        self.assertEqual(len(summary["hourlyByInstance"]), 2)
+        hourly_by_instance = {
+            row["instance"]: row for row in summary["hourlyByInstance"]
+        }
+        self.assertEqual(hourly_by_instance["agent-1"]["hour"], timestamp.hour)
+        self.assertEqual(hourly_by_instance["agent-1"]["requests"], 1)
+        self.assertEqual(hourly_by_instance["agent-1"]["totalDataBytes"], 30)
+        self.assertEqual(
+            hourly_by_instance["agent-1"]["averageResponseTimeMs"], 100.0
+        )
+        self.assertEqual(hourly_by_instance["agent-2"]["totalDataBytes"], 5)
         self.assertEqual(
             {row["instance"] for row in summary["instances"]},
             {"agent-1", "agent-2"},
@@ -246,8 +257,24 @@ class TrafficAndSyncTests(unittest.TestCase):
             dashboard["recentRecords"][0]["studyDescription"],
             "CT CHEST WITH CONTRAST",
         )
+        analytics = get_analytics(self.session, current_user=None)
+        self.assertEqual(
+            sum(row["records"] for row in analytics["daily"]),
+            2,
+        )
+        self.assertEqual(
+            {row["instanceCode"] for row in analytics["daily"]},
+            {"agent-1"},
+        )
+        self.assertEqual(len(analytics["byDescription"]), 1)
+        description_row = analytics["byDescription"][0]
+        self.assertEqual(description_row["instanceCode"], "agent-1")
+        self.assertEqual(description_row["modality"], "CT")
+        self.assertEqual(description_row["studyDescription"], "CT CHEST WITH CONTRAST")
+        self.assertEqual(description_row["records"], 2)
+        self.assertEqual(description_row["credits"], 2)
 
-    def test_analytics_returns_instance_modality_trends_for_last_year(self):
+    def test_analytics_trends_group_records_by_received_date(self):
         now = datetime.now(timezone.utc)
         self.session.add_all(
             (
@@ -289,6 +316,10 @@ class TrafficAndSyncTests(unittest.TestCase):
         self.assertEqual(
             {row["modality"] for row in analytics["daily"]},
             {"CT", "MR"},
+        )
+        self.assertEqual(
+            sum(row["records"] for row in analytics["daily"]),
+            3,
         )
 
     def test_traffic_middleware_measures_received_and_sent_body_bytes(self):

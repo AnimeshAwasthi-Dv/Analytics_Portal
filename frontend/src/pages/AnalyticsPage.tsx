@@ -1,11 +1,10 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { Icon } from "../Components/Icon.tsx";
 import { api } from "../services/api.ts";
 import type { AnalyticsResponse } from "../types";
 
-type RangeOption = "7d" | "30d" | "90d" | "custom";
+type RangeOption = "today" | "7d" | "30d" | "90d" | "custom";
 type Granularity = "daily" | "weekly" | "monthly";
 type AnalyticsRow = {
   date: string;
@@ -21,7 +20,7 @@ type TrendPoint = {
 type TrendSeries = { key: string; label: string; color: string; values: number[] };
 
 const numberFormat = new Intl.NumberFormat();
-const rangeDays: Record<Exclude<RangeOption, "custom">, number> = {
+const rangeDays: Record<Exclude<RangeOption, "custom" | "today">, number> = {
   "7d": 7,
   "30d": 30,
   "90d": 90,
@@ -40,10 +39,8 @@ function dateLabel(value: string, options?: Intl.DateTimeFormatOptions): string 
 }
 
 function initialDateRange(): { start: string; end: string } {
-  const end = new Date();
-  const start = new Date(end);
-  start.setUTCDate(start.getUTCDate() - 29);
-  return { start: dateKey(start), end: dateKey(end) };
+  const today = dateKey(new Date());
+  return { start: today, end: today };
 }
 
 function startOfPeriod(date: Date, granularity: Granularity): Date {
@@ -64,14 +61,19 @@ function TrendChart({
   series: TrendSeries[];
 }) {
   const width = 1000;
-  const height = 190;
-  const left = 34;
-  const right = 8;
-  const top = 10;
-  const bottom = 32;
+  const height = 280;
+  const left = 58;
+  const right = 100;
+  const top = 20;
+  const bottom = 46;
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
-  const maximum = Math.max(1, ...series.flatMap((line) => line.values));
+  let maximum = 1;
+  for (const line of series) {
+    for (const value of line.values) {
+      maximum = Math.max(maximum, value);
+    }
+  }
   const xFor = (index: number) =>
     left + (points.length <= 1 ? plotWidth / 2 : (index / (points.length - 1)) * plotWidth);
   const yFor = (value: number) => top + plotHeight - (value / maximum) * plotHeight;
@@ -92,7 +94,7 @@ function TrendChart({
           role="img"
           aria-label="Line chart showing analytics trends"
         >
-          {[0, 0.5, 1].map((fraction) => {
+          {[0, 0.25, 0.5, 0.75, 1].map((fraction) => {
             const y = top + plotHeight * fraction;
             return (
               <g key={fraction}>
@@ -103,20 +105,48 @@ function TrendChart({
               </g>
             );
           })}
-          {series.map((line) => (
+          {series.map((line, seriesIndex) => (
             <g key={line.key}>
               <polyline
                 points={line.values.map((value, index) => `${xFor(index)},${yFor(value)}`).join(" ")}
                 fill="none"
                 stroke={line.color}
-                strokeWidth="2"
+                strokeWidth="3"
                 vectorEffect="non-scaling-stroke"
               />
               {line.values.map((value, index) => (
-                <circle key={`${line.key}-${points[index].key}`} cx={xFor(index)} cy={yFor(value)} r="2" fill={line.color}>
+                <circle key={`${line.key}-${points[index].key}`} cx={xFor(index)} cy={yFor(value)} r="4" fill={line.color}>
                   <title>{`${points[index].label}: ${line.label}, ${numberFormat.format(value)}`}</title>
                 </circle>
               ))}
+              {points.length <= 8
+                ? line.values.map((value, index) => (
+                    <text
+                      key={`${line.key}-${points[index].key}-value`}
+                      x={xFor(index)}
+                      y={Math.max(top + 14, yFor(value) - 10 - (seriesIndex % 2) * 14)}
+                      textAnchor="middle"
+                      fill={line.color}
+                      className="analytics-point-value"
+                    >
+                      {numberFormat.format(value)}
+                    </text>
+                  ))
+                : points.length > 0 && (
+                <text
+                  x={points.length === 1 ? xFor(0) + 8 : xFor(points.length - 1) - 6}
+                  y={
+                    yFor(line.values[line.values.length - 1]) +
+                    4 +
+                    (seriesIndex - (series.length - 1) / 2) * 14
+                  }
+                  textAnchor={points.length === 1 ? "start" : "end"}
+                  fill={line.color}
+                  className="analytics-point-value"
+                >
+                  {`${line.label} ${numberFormat.format(line.values[line.values.length - 1])}`}
+                </text>
+              )}
             </g>
           ))}
           {labelIndexes.map((index) => (
@@ -136,9 +166,89 @@ function TrendChart({
       )}
       <div className="analytics-chart-legend" aria-hidden="true">
         {series.map((line) => (
-          <span key={line.key}><i style={{ backgroundColor: line.color }} />{line.label}</span>
+          <span key={line.key}>
+            <i style={{ backgroundColor: line.color }} />
+            {line.label} <b>{numberFormat.format(line.values.reduce((total, value) => total + value, 0))}</b>
+          </span>
         ))}
       </div>
+    </div>
+  );
+}
+
+function StudySharePie({
+  rows,
+  total,
+  modality,
+}: {
+  rows: { instanceCode: string; records: number }[];
+  total: number;
+  modality: string;
+}) {
+  const slices = rows
+    .filter((row) => row.records > 0)
+    .map((row, index) => ({
+      ...row,
+      color: modalityColors[index % modalityColors.length],
+      percentage: row.records / total,
+    }));
+  let angle = -90;
+
+  return (
+    <div className="analytics-share-pie">
+      {slices.length ? (
+        <>
+          <svg
+            className="analytics-share-pie-chart"
+            viewBox="0 0 220 220"
+            role="img"
+            aria-label={`${modality} studies by instance pie chart`}
+          >
+            {slices.length === 1 ? (
+              <circle cx="110" cy="110" r="100" fill={slices[0].color}>
+                <title>{`${slices[0].instanceCode}: ${numberFormat.format(slices[0].records)} studies, 100%`}</title>
+              </circle>
+            ) : (
+              slices.map((slice) => {
+                const startAngle = angle;
+                const endAngle = angle + slice.percentage * 360;
+                angle = endAngle;
+                const startRadians = (startAngle * Math.PI) / 180;
+                const endRadians = (endAngle * Math.PI) / 180;
+                const startX = 110 + 100 * Math.cos(startRadians);
+                const startY = 110 + 100 * Math.sin(startRadians);
+                const endX = 110 + 100 * Math.cos(endRadians);
+                const endY = 110 + 100 * Math.sin(endRadians);
+                const largeArc = slice.percentage > 0.5 ? 1 : 0;
+
+                return (
+                  <path
+                    key={slice.instanceCode}
+                    d={`M 110 110 L ${startX} ${startY} A 100 100 0 ${largeArc} 1 ${endX} ${endY} Z`}
+                    fill={slice.color}
+                    stroke="#fff"
+                    strokeWidth="2"
+                  >
+                    <title>{`${slice.instanceCode}: ${numberFormat.format(slice.records)} studies, ${numberFormat.format(slice.percentage * 100)}%`}</title>
+                  </path>
+                );
+              })
+            )}
+          </svg>
+          <div className="analytics-share-pie-legend">
+            {slices.map((slice) => (
+              <div key={slice.instanceCode}>
+                <i style={{ backgroundColor: slice.color }} />
+                <span>{slice.instanceCode}</span>
+                <strong>{numberFormat.format(slice.records)}</strong>
+                <small>{numberFormat.format(slice.percentage * 100)}%</small>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <p className="analytics-empty">No study data for this modality in the selected date range.</p>
+      )}
     </div>
   );
 }
@@ -168,7 +278,7 @@ export function AnalyticsPage() {
   const [selectedModality, setSelectedModality] = useState("ALL");
   const [selectedInstance, setSelectedInstance] = useState("ALL");
   const [deepDiveModality, setDeepDiveModality] = useState("");
-  const [rangeOption, setRangeOption] = useState<RangeOption>("30d");
+  const [rangeOption, setRangeOption] = useState<RangeOption>("today");
   const [granularity, setGranularity] = useState<Granularity>("daily");
   const [startDate, setStartDate] = useState(initialRange.start);
   const [endDate, setEndDate] = useState(initialRange.end);
@@ -258,6 +368,43 @@ export function AnalyticsPage() {
     [rangeFilteredRows, selectedModality]
   );
 
+  const descriptionRows = useMemo(() => {
+    const grouped = new Map<
+      string,
+      { modality: string; description: string | null; records: number; credits: number }
+    >();
+    for (const row of analytics?.byDescription ?? []) {
+      if (
+        dateRangeInvalid ||
+        row.date < startDate ||
+        row.date > endDate ||
+        (selectedInstance !== "ALL" && row.instanceCode !== selectedInstance) ||
+        (selectedModality !== "ALL" &&
+          row.modality.toLocaleUpperCase() !== selectedModality.toLocaleUpperCase())
+      ) {
+        continue;
+      }
+      const description = row.studyDescription?.trim() || null;
+      const key = `${row.modality.toLocaleUpperCase()}\u0000${description?.toLocaleUpperCase() ?? ""}`;
+      const total = grouped.get(key) ?? {
+        modality: row.modality,
+        description,
+        records: 0,
+        credits: 0,
+      };
+      total.records += row.records;
+      total.credits += row.credits;
+      grouped.set(key, total);
+    }
+    return Array.from(grouped.values()).sort(
+      (left, right) =>
+        right.records - left.records ||
+        left.modality.localeCompare(right.modality) ||
+        (left.description ?? "").localeCompare(right.description ?? "")
+    );
+  }, [analytics, dateRangeInvalid, endDate, selectedInstance, selectedModality, startDate]);
+  const descriptionStudyTotal = descriptionRows.reduce((sum, row) => sum + row.records, 0);
+
   const summary = useMemo(
     () => ({
       records: filteredRows.reduce((total, row) => total + row.records, 0),
@@ -267,16 +414,37 @@ export function AnalyticsPage() {
     [filteredRows]
   );
 
-  const receivedModalities = useMemo(
-    () =>
-      modalities.filter((modality) =>
-        rangeFilteredRows.some(
-          (row) => row.modality.toLocaleUpperCase() === modality.toLocaleUpperCase()
-        )
-      ),
-    [modalities, rangeFilteredRows]
-  );
+  const modalityStudyCounts = useMemo(() => {
+    const counts = new Map(modalities.map((modality) => [modality, 0]));
+    const modalityByNormalizedName = new Map<string, string>();
+    for (const modality of modalities) {
+      const normalized = modality.toLocaleUpperCase();
+      if (!modalityByNormalizedName.has(normalized)) {
+        modalityByNormalizedName.set(normalized, modality);
+      }
+    }
 
+    for (const row of rangeFilteredRows) {
+      const matchingModality = modalityByNormalizedName.get(
+        row.modality.toLocaleUpperCase()
+      );
+      if (matchingModality) {
+        counts.set(matchingModality, (counts.get(matchingModality) ?? 0) + row.records);
+      }
+    }
+    return counts;
+  }, [modalities, rangeFilteredRows]);
+  const instanceStudyCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of rangeFilteredRows) {
+      counts.set(row.instanceCode, (counts.get(row.instanceCode) ?? 0) + row.records);
+    }
+    return Array.from(counts.entries()).sort(([left], [right]) => left.localeCompare(right));
+  }, [rangeFilteredRows]);
+
+  const totalStudiesInRange = rangeFilteredRows.reduce((total, row) => total + row.records, 0);
+  const totalViewsInRange = rangeFilteredRows.reduce((total, row) => total + row.credits, 0);
+  const instancesInRange = new Set(rangeFilteredRows.map((row) => row.instanceCode)).size;
   const modalityRows = useMemo(() => {
     const grouped = new Map<string, { records: number; credits: number }>();
     for (const row of filteredRows) {
@@ -315,19 +483,6 @@ export function AnalyticsPage() {
     return points;
   }, [endDate, granularity, startDate]);
 
-  const trendTotals = useMemo(() => {
-    const totals = new Map<string, { records: number; credits: number }>();
-    for (const row of filteredRows) {
-      const bucket = dateKey(startOfPeriod(new Date(`${row.date}T00:00:00Z`), granularity));
-      const key = `${bucket}\u0000${row.modality}`;
-      const total = totals.get(key) ?? { records: 0, credits: 0 };
-      total.records += row.records;
-      total.credits += row.credits;
-      totals.set(key, total);
-    }
-    return totals;
-  }, [filteredRows, granularity]);
-
   const deepDiveTotals = useMemo(() => {
     const totals = new Map<string, { records: number; credits: number }>();
     for (const row of rangeFilteredRows) {
@@ -341,41 +496,20 @@ export function AnalyticsPage() {
     return totals;
   }, [granularity, rangeFilteredRows]);
 
-  const trendSeries = useMemo<TrendSeries[]>(
+  const modalityTrendSeries = useMemo<TrendSeries[]>(
     () =>
       modalities
-        .filter((modality) => selectedModality === "ALL" || modality === selectedModality)
-        .map((modality) => ({
+        .map((modality, index) => ({ modality, index }))
+        .filter(({ modality }) => selectedModality === "ALL" || modality === selectedModality)
+        .map(({ modality, index }) => ({
           key: modality,
           label: modality,
-          color: modalityColors[modalities.indexOf(modality) % modalityColors.length],
+          color: modalityColors[index % modalityColors.length],
           values: trendPoints.map(
-            (point) => trendTotals.get(`${point.key}\u0000${modality}`)?.records ?? 0
+            (point) => deepDiveTotals.get(`${point.key}\u0000${modality}`)?.records ?? 0
           ),
         })),
-    [modalities, selectedModality, trendPoints, trendTotals]
-  );
-
-  const deepDiveTrendSeries = useMemo<TrendSeries[]>(
-    () => [
-      {
-        key: "records",
-        label: "Study",
-        color: "#1765e9",
-        values: trendPoints.map(
-          (point) => deepDiveTotals.get(`${point.key}\u0000${activeDeepDive}`)?.records ?? 0
-        ),
-      },
-      {
-        key: "credits",
-        label: "Views",
-        color: "#16805d",
-        values: trendPoints.map(
-          (point) => deepDiveTotals.get(`${point.key}\u0000${activeDeepDive}`)?.credits ?? 0
-        ),
-      },
-    ],
-    [activeDeepDive, deepDiveTotals, trendPoints]
+    [deepDiveTotals, modalities, selectedModality, trendPoints]
   );
 
   const instanceComparison = useMemo(() => {
@@ -431,6 +565,12 @@ export function AnalyticsPage() {
     setRangeOption(value);
     if (value === "custom") return;
     const end = new Date();
+    if (value === "today") {
+      const today = dateKey(end);
+      setStartDate(today);
+      setEndDate(today);
+      return;
+    }
     const start = new Date(end);
     start.setUTCDate(start.getUTCDate() - rangeDays[value] + 1);
     setStartDate(dateKey(start));
@@ -476,21 +616,6 @@ export function AnalyticsPage() {
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
-  const cards = [
-    {
-      label: "Source instances",
-      value: summary.instances,
-      detail: instances.join("  •  ") || "No instances in this range",
-      icon: "database" as const,
-    },
-    {
-      label: "Modalities received",
-      value: receivedModalities.length,
-      detail: receivedModalities.join("  •  ") || "No modalities in this range",
-      icon: "activity" as const,
-    },
-  ];
-
   const comparisonModalities = modalities;
 
   return (
@@ -516,6 +641,7 @@ export function AnalyticsPage() {
                 value={rangeOption}
                 onChange={(event) => handleRangeChange(event.target.value as RangeOption)}
               >
+                <option value="today">Today</option>
                 <option value="7d">Last 7 days</option>
                 <option value="30d">Last 30 days</option>
                 <option value="90d">Last 90 days</option>
@@ -576,7 +702,7 @@ export function AnalyticsPage() {
               onClick={() => void loadAnalytics()}
               disabled={refreshing || loading}
             >
-              <span aria-hidden="true">↻</span>{refreshing ? "Refreshing..." : "Refresh"}
+              {refreshing ? "Refreshing..." : "Refresh"}
             </button>
             <button
               type="button"
@@ -584,7 +710,7 @@ export function AnalyticsPage() {
               onClick={downloadCsv}
               disabled={!analytics}
             >
-              <span aria-hidden="true">↓</span>Export CSV
+              Export CSV
             </button>
           </div>
         </header>
@@ -604,22 +730,81 @@ export function AnalyticsPage() {
           <p className="analytics-panel analytics-loading">Loading saved portal data...</p>
         ) : analytics ? (
           <>
-            <section className="analytics-kpi-grid" aria-label="Filtered analytics summary">
-              {cards.map(({ label, value, detail, icon }) => (
-                <article key={label} className="analytics-kpi-card">
-                  <span className="analytics-kpi-icon"><Icon name={icon} /></span>
-                  <div>
-                    <p>{label}</p>
-                    <strong>{numberFormat.format(value)}</strong>
-                    <small>{detail}</small>
-                  </div>
-                </article>
-              ))}
+            <section className="analytics-kpi-grid" aria-label="Analytics summary">
+              <article className="analytics-kpi-card">
+                <span>Total studies</span>
+                <strong>{numberFormat.format(totalStudiesInRange)}</strong>
+              </article>
+              <article className="analytics-kpi-card">
+                <span>Total views</span>
+                <strong>{numberFormat.format(totalViewsInRange)}</strong>
+              </article>
+            </section>
+
+            <section className="analytics-summary-breakdowns" aria-label="Study breakdowns">
+              <article className="analytics-panel analytics-summary-box">
+                <div className="analytics-section-heading">
+                  <h2>Studies by modality</h2>
+                  <span className="analytics-section-note">{numberFormat.format(totalStudiesInRange)} total</span>
+                </div>
+                <div className="analytics-summary-modality-list">
+                  {modalities.map((modality, index) => (
+                    <button
+                      key={modality}
+                      type="button"
+                      className={`analytics-summary-modality${selectedModality === modality ? " active" : ""}`}
+                      aria-pressed={selectedModality === modality}
+                      onClick={() => setSelectedModality(selectedModality === modality ? "ALL" : modality)}
+                    >
+                      <span className="analytics-summary-modality-label">
+                        <i style={{ backgroundColor: modalityColors[index % modalityColors.length] }} />
+                        {modality}
+                      </span>
+                      <strong>{numberFormat.format(modalityStudyCounts.get(modality) ?? 0)}</strong>
+                    </button>
+                  ))}
+                  {!modalities.length && (
+                    <p className="analytics-empty">No modalities have been received in this date range.</p>
+                  )}
+                </div>
+              </article>
+
+              <article className="analytics-panel analytics-summary-box">
+                <div className="analytics-section-heading">
+                  <h2>Studies by instance</h2>
+                  <span className="analytics-section-note">{numberFormat.format(instancesInRange)} instances</span>
+                </div>
+                <div className="analytics-summary-instance-list">
+                  {instanceStudyCounts.map(([instance, count]) => (
+                    <button
+                      key={instance}
+                      type="button"
+                      className={`analytics-summary-instance${selectedInstance === instance ? " active" : ""}`}
+                      aria-pressed={selectedInstance === instance}
+                      onClick={() => setSelectedInstance(selectedInstance === instance ? "ALL" : instance)}
+                    >
+                      <span>{instance}</span>
+                      <strong>{numberFormat.format(count)}</strong>
+                    </button>
+                  ))}
+                  {!instanceStudyCounts.length && (
+                    <p className="analytics-empty">No instance studies in this date range.</p>
+                  )}
+                </div>
+              </article>
             </section>
 
             <section className="analytics-panel analytics-main-chart" aria-label="Studies over time by modality">
-              <div className="analytics-section-heading">
-                <h2>Total studies trend</h2>
+              <div className="analytics-section-heading analytics-trend-heading">
+                <div>
+                  <h2>Study trend</h2>
+                  <p>
+                    {dateLabel(startDate, { month: "short", day: "numeric", year: "numeric" })}
+                    {startDate !== endDate && (
+                      <> – {dateLabel(endDate, { month: "short", day: "numeric", year: "numeric" })}</>
+                    )}
+                  </p>
+                </div>
                 <div className="analytics-chart-controls">
                   <div className="analytics-granularity-tabs" role="group" aria-label="Trend interval">
                     {(["daily", "weekly", "monthly"] as const).map((period) => (
@@ -631,17 +816,12 @@ export function AnalyticsPage() {
                         onClick={() => setGranularity(period)}
                       >
                         {period[0].toUpperCase() + period.slice(1)}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="analytics-chart-range">
-                    <span>{dateLabel(startDate, { month: "short", day: "numeric", year: "numeric" })}</span>
-                    <span>–</span>
-                    <span>{dateLabel(endDate, { month: "short", day: "numeric", year: "numeric" })}</span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
-              </div>
-              {!dateRangeInvalid && <TrendChart points={trendPoints} series={trendSeries} />}
+                {!dateRangeInvalid && <TrendChart points={trendPoints} series={modalityTrendSeries} />}
             </section>
 
             <section className="analytics-panel analytics-table-panel">
@@ -753,9 +933,13 @@ export function AnalyticsPage() {
               <div className="analytics-deep-grid">
                 <div className="analytics-deep-chart">
                   <div className="analytics-section-heading">
-                    <h3>{activeDeepDive || "Modality"} trend</h3>
+                    <h3>{activeDeepDive || "Modality"} studies by instance</h3>
                   </div>
-                  <TrendChart points={trendPoints} series={deepDiveTrendSeries} />
+                  <StudySharePie
+                    rows={deepDiveRows}
+                    total={deepDiveTotal}
+                    modality={activeDeepDive || "Modality"}
+                  />
                 </div>
 
                 <div className="analytics-deep-table">
@@ -810,6 +994,70 @@ export function AnalyticsPage() {
                     </table>
                   </div>
                 </div>
+              </div>
+            </section>
+
+            <section className="analytics-panel analytics-description-breakdown">
+              <div className="analytics-section-heading">
+                <div>
+                  <h2>Studies by description</h2>
+                  <p className="analytics-description-help">
+                    Choose a modality to see the study types received.
+                  </p>
+                </div>
+                <span className="analytics-section-note">
+                  {numberFormat.format(descriptionStudyTotal)} studies
+                </span>
+              </div>
+              <div className="analytics-description-tabs" role="group" aria-label="Filter study descriptions by modality">
+                <button
+                  type="button"
+                  className={selectedModality === "ALL" ? "active" : ""}
+                  aria-pressed={selectedModality === "ALL"}
+                  onClick={() => setSelectedModality("ALL")}
+                >
+                  All
+                </button>
+                {modalities.map((modality, index) => (
+                  <button
+                    key={modality}
+                    type="button"
+                    className={selectedModality.toLocaleUpperCase() === modality.toLocaleUpperCase() ? "active" : ""}
+                    aria-pressed={selectedModality.toLocaleUpperCase() === modality.toLocaleUpperCase()}
+                    style={{ borderColor: modalityColors[index % modalityColors.length] }}
+                    onClick={() => setSelectedModality(modality)}
+                  >
+                    {modality}
+                  </button>
+                ))}
+              </div>
+              <div className="analytics-description-list" aria-live="polite">
+                {descriptionRows.map((row) => (
+                  <article
+                    key={`${row.modality}-${row.description ?? "unspecified"}`}
+                    className="analytics-description-row"
+                  >
+                    <div className="analytics-description-row-copy">
+                      {selectedModality === "ALL" && (
+                        <span className="analytics-description-modality">{row.modality}</span>
+                      )}
+                      <span className="analytics-description-name">
+                        {row.description || "Description not provided"}
+                      </span>
+                    </div>
+                    <div className="analytics-description-row-counts">
+                      <strong>{numberFormat.format(row.records)}</strong>
+                      <span>{row.records === 1 ? "study" : "studies"}</span>
+                      <span className="analytics-description-count-divider">·</span>
+                      <span>{numberFormat.format(row.credits)} {row.credits === 1 ? "view" : "views"}</span>
+                    </div>
+                  </article>
+                ))}
+                {!descriptionRows.length && (
+                  <p className="analytics-description-empty">
+                    No study descriptions for {selectedModality === "ALL" ? "these filters" : selectedModality}.
+                  </p>
+                )}
               </div>
             </section>
           </>

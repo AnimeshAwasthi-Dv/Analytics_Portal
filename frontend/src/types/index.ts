@@ -50,6 +50,14 @@ export interface AnalyticsResponse {
     records: number;
     credits: number;
   }>;
+  byDescription: Array<{
+    date: string;
+    instanceCode: string;
+    modality: string;
+    studyDescription: string | null;
+    records: number;
+    credits: number;
+  }>;
   byInstance: Array<{
     instanceCode: string;
     modality: string;

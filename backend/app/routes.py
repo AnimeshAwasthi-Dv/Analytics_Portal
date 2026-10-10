@@ -350,24 +350,49 @@ def get_analytics(
     )
 
     trend_start = datetime.now(timezone.utc) - timedelta(days=365)
+    received_at = SyncRecord.synced_at
     daily_rows = (
         db.query(
-            func.date(SyncRecord.processing_created_at),
+            func.date(received_at),
             SyncRecord.instance_code,
             SyncRecord.modality,
             func.count(SyncRecord.id),
             func.coalesce(func.sum(SyncRecord.credits_used), 0),
         )
         .filter(
-            SyncRecord.processing_created_at.is_not(None),
-            SyncRecord.processing_created_at >= trend_start,
+            received_at.is_not(None),
+            received_at >= trend_start,
         )
         .group_by(
-            func.date(SyncRecord.processing_created_at),
+            func.date(received_at),
             SyncRecord.instance_code,
             SyncRecord.modality,
         )
-        .order_by(func.date(SyncRecord.processing_created_at))
+        .order_by(func.date(received_at))
+        .all()
+    )
+
+    normalized_description = func.nullif(func.trim(SyncRecord.study_description), "")
+    description_rows = (
+        db.query(
+            func.date(received_at),
+            SyncRecord.instance_code,
+            SyncRecord.modality,
+            normalized_description,
+            func.count(SyncRecord.id),
+            func.coalesce(func.sum(SyncRecord.credits_used), 0),
+        )
+        .filter(
+            received_at.is_not(None),
+            received_at >= trend_start,
+        )
+        .group_by(
+            func.date(received_at),
+            SyncRecord.instance_code,
+            SyncRecord.modality,
+            normalized_description,
+        )
+        .order_by(func.date(received_at))
         .all()
     )
 
@@ -436,6 +461,18 @@ def get_analytics(
                 "credits": credits,
             }
             for day, instance_code, modality, records, credits in daily_rows
+            if day is not None
+        ],
+        "byDescription": [
+            {
+                "date": day.isoformat() if hasattr(day, "isoformat") else str(day),
+                "instanceCode": instance_code,
+                "modality": modality or "Not specified",
+                "studyDescription": description,
+                "records": records,
+                "credits": credits,
+            }
+            for day, instance_code, modality, description, records, credits in description_rows
             if day is not None
         ],
         "byInstance": [
@@ -562,6 +599,30 @@ def get_traffic_summary(
         .all()
     )
 
+    hour_expression = func.extract(
+        "hour", func.timezone("UTC", TrafficLog.timestamp)
+    )
+    hourly_rows = (
+        db.query(
+            hour_expression.label("hour"),
+            Instance.identifier.label("instance"),
+            func.count(TrafficLog.id).label("requests"),
+            func.coalesce(func.sum(traffic_total_bytes()), 0).label("data_bytes"),
+            func.coalesce(func.sum(TrafficLog.processing_time), 0).label(
+                "processing_seconds"
+            ),
+        )
+        .join(Instance, Instance.id == TrafficLog.instance_id)
+        .filter(
+            TrafficLog.timestamp >= start,
+            TrafficLog.timestamp < end,
+            TrafficLog.instance_id.is_not(None),
+        )
+        .group_by(hour_expression, Instance.identifier)
+        .order_by(hour_expression, Instance.identifier)
+        .all()
+    )
+
     recent_request_rows = (
         db.query(
             TrafficLog.timestamp,
@@ -664,6 +725,20 @@ def get_traffic_summary(
                 "totalDataBytes": int(row.data_bytes or 0),
             }
             for row in rows
+        ],
+        "hourlyByInstance": [
+            {
+                "hour": int(row.hour),
+                "instance": row.instance,
+                "requests": int(row.requests or 0),
+                "totalDataBytes": int(row.data_bytes or 0),
+                "averageResponseTimeMs": round(
+                    float(row.processing_seconds or 0) * 1000 / row.requests, 2
+                )
+                if row.requests
+                else 0,
+            }
+            for row in hourly_rows
         ],
         "recentRequests": [
             {

@@ -3,6 +3,7 @@ import {
   api,
   type DailyInstanceTraffic,
   type DailyTraffic,
+  type HourlyInstanceTraffic,
   type TrafficAnalyticsData,
   type TrafficPeriod,
 } from "../services/api.ts";
@@ -87,14 +88,34 @@ function makeTrend(
   return points;
 }
 
+function makeHourlyTrend(rows: HourlyInstanceTraffic[], instance: string): TrendPoint[] {
+  const totals = new Map<number, { requests: number; totalDataBytes: number }>();
+  for (const row of rows) {
+    if (instance !== "ALL" && row.instance !== instance) continue;
+    const total = totals.get(row.hour) ?? { requests: 0, totalDataBytes: 0 };
+    total.requests += row.requests;
+    total.totalDataBytes += row.totalDataBytes;
+    totals.set(row.hour, total);
+  }
+  return Array.from({ length: 24 }, (_, hour) => ({
+    key: String(hour).padStart(2, "0"),
+    label: `${String(hour).padStart(2, "0")}:00`,
+    ...(totals.get(hour) ?? { requests: 0, totalDataBytes: 0 }),
+  }));
+}
+
 function TrafficMetricChart({
   title,
+  description,
   points,
   metric,
+  chartType = "bar",
 }: {
   title: string;
+  description?: string;
   points: TrendPoint[];
   metric: "requests" | "totalDataBytes";
+  chartType?: "bar" | "line";
 }) {
   const width = 900;
   const height = 250;
@@ -116,12 +137,13 @@ function TrafficMetricChart({
   return (
     <article className="traffic-chart-card">
       <h2>{title}</h2>
+      {description && <p className="traffic-chart-description">{description}</p>}
       {points.some((point) => point[metric] > 0) ? (
         <svg
           className="traffic-trend-chart"
           viewBox={`0 0 ${width} ${height}`}
           role="img"
-          aria-label={`${title} bar chart`}
+          aria-label={`${title} ${chartType} chart`}
         >
           {[0, 0.5, 1].map((fraction) => {
             const y = top + plotHeight * fraction;
@@ -146,7 +168,50 @@ function TrafficMetricChart({
               </g>
             );
           })}
-          {points.map((point, index) => {
+          {chartType === "line" && (
+            <g>
+              <polyline
+                points={points.map((point, index) => {
+                  const value = point[metric];
+                  const x = left + slotWidth * index + slotWidth / 2;
+                  const y = top + plotHeight - (value / ceiling) * plotHeight;
+                  return `${x},${y}`;
+                }).join(" ")}
+                fill="none"
+                className="traffic-data-line"
+              />
+              {points.map((point, index) => {
+                const value = point[metric];
+                const x = left + slotWidth * index + slotWidth / 2;
+                const y = top + plotHeight - (value / ceiling) * plotHeight;
+                const labelStep = Math.max(1, Math.ceil(points.length / 8));
+                const showLabel = index === 0 || index === points.length - 1 || index % labelStep === 0;
+                return (
+                  <g key={point.key}>
+                    <circle cx={x} cy={y} r="3.5" className="traffic-data-point">
+                      <title>{`${point.label}: ${formatValue(value)}`}</title>
+                    </circle>
+                    {showLabel && value > 0 && (
+                      <text
+                        x={x}
+                        y={Math.max(top + 11, y - 8)}
+                        textAnchor="middle"
+                        className="traffic-value-label"
+                      >
+                        {formatValue(value)}
+                      </text>
+                    )}
+                    {showLabel && (
+                      <text x={x} y={height - 12} textAnchor="middle" className="traffic-axis-label">
+                        {point.label}
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+            </g>
+          )}
+          {chartType === "bar" && points.map((point, index) => {
             const value = point[metric];
             const barHeight = (value / ceiling) * plotHeight;
             const x = left + slotWidth * index + (slotWidth - barWidth) / 2;
@@ -270,6 +335,10 @@ export function TrafficAnalyticsPage() {
         : [],
     [analytics, granularity, selectedInstance]
   );
+  const hourlyTrend = useMemo(
+    () => makeHourlyTrend(analytics?.hourlyByInstance ?? [], selectedInstance),
+    [analytics, selectedInstance]
+  );
   const maxBytes = Math.max(1, ...instances.map((row) => row.totalDataBytes));
   const displayName = selected?.name ?? "All instances";
   const displayRequests = selected?.requests ?? overview?.totalRequests ?? 0;
@@ -350,14 +419,32 @@ export function TrafficAnalyticsPage() {
           <>
             <section className="traffic-chart-grid" aria-label="Traffic over time">
               <TrafficMetricChart
-                title={`${granularity[0].toUpperCase()}${granularity.slice(1)} requests · ${displayName}`}
+                title={`${granularity[0].toUpperCase()}${granularity.slice(1)} request frequency · ${displayName}`}
+                description="Number of requests received in each time period."
                 points={dailyTrend}
                 metric="requests"
               />
               <TrafficMetricChart
-                title={`${granularity[0].toUpperCase()}${granularity.slice(1)} data transferred · ${displayName}`}
+                title={`${granularity[0].toUpperCase()}${granularity.slice(1)} data volume · ${displayName}`}
+                description="Request and response data transferred in each time period."
                 points={dailyTrend}
                 metric="totalDataBytes"
+                chartType="line"
+              />
+            </section>
+            <section className="traffic-chart-grid traffic-hourly-grid" aria-label="Traffic frequency by time of day">
+              <TrafficMetricChart
+                title={`Request frequency by hour · ${displayName}`}
+                description={`Requests grouped by UTC hour of day across ${analytics.startDate} to ${analytics.endDate}.`}
+                points={hourlyTrend}
+                metric="requests"
+              />
+              <TrafficMetricChart
+                title={`Data transferred by hour · ${displayName}`}
+                description="Request and response bytes grouped by UTC hour of day."
+                points={hourlyTrend}
+                metric="totalDataBytes"
+                chartType="line"
               />
             </section>
             <section className="traffic-panel">

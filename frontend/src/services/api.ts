@@ -44,6 +44,14 @@ export interface DailyInstanceTraffic extends DailyTraffic {
   instance: string;
 }
 
+export interface HourlyInstanceTraffic {
+  hour: number;
+  instance: string;
+  requests: number;
+  totalDataBytes: number;
+  averageResponseTimeMs: number;
+}
+
 export interface RecentTrafficRequest {
   timestamp: string;
   instance: string;
@@ -60,6 +68,7 @@ export interface TrafficAnalyticsData {
   overview: TrafficOverview;
   daily: DailyTraffic[];
   dailyByInstance: DailyInstanceTraffic[];
+  hourlyByInstance: HourlyInstanceTraffic[];
   recentRequests: RecentTrafficRequest[];
   instances: InstanceTraffic[];
 }
@@ -85,6 +94,7 @@ interface ApiRequestOptions {
   method?: "GET" | "POST";
   data?: unknown;
   params?: Record<string, string | undefined>;
+  cache?: RequestCache;
 }
 
 interface ApiError extends Error {
@@ -136,6 +146,7 @@ async function apiRequest<T>(
     {
       method,
       credentials: "include",
+      ...(options.cache ? { cache: options.cache } : {}),
       ...(hasBody
         ? {
             headers: { "Content-Type": "application/json" },
@@ -176,9 +187,12 @@ async function apiRequest<T>(
 const httpClient = {
   get<T>(
     endpoint: string,
-    config?: { params?: Record<string, string | undefined> }
+    config?: { params?: Record<string, string | undefined>; cache?: RequestCache }
   ): Promise<{ data: T }> {
-    return apiRequest<T>(endpoint, { params: config?.params }).then((data) => ({
+    return apiRequest<T>(endpoint, {
+      params: config?.params,
+      cache: config?.cache,
+    }).then((data) => ({
       data,
     }));
   },
@@ -268,7 +282,7 @@ export const api = {
   async getAnalytics(): Promise<AnalyticsResponse> {
     if (!analyticsRequest) {
       analyticsRequest = httpClient
-        .get<AnalyticsResponse>("/api/v1/analytics")
+        .get<AnalyticsResponse>("/api/v1/analytics", { cache: "no-store" })
         .then((response) => response.data);
     }
     const request = analyticsRequest;
