@@ -12,8 +12,22 @@ import { api } from "./services/api.ts";
 import type { User } from "./services/api";
 import type { DashboardLoadResult } from "./types";
 
+let dashboardPageModule: Promise<typeof import("./pages/DashboardPage")> | null =
+  null;
+
+function loadDashboardPage() {
+  dashboardPageModule ??= import("./pages/DashboardPage");
+  return dashboardPageModule;
+}
+
+if (window.location.pathname === "/dashboard") {
+  void loadDashboardPage().catch((error: unknown) => {
+    console.error("Dashboard page loading error:", error);
+  });
+}
+
 const DashboardPage = lazy(async () => ({
-  default: (await import("./pages/DashboardPage")).DashboardPage,
+  default: (await loadDashboardPage()).DashboardPage,
 }));
 const LoginPage = lazy(async () => ({
   default: (await import("./pages/LoginPage")).LoginPage,
@@ -147,7 +161,11 @@ function App() {
     }
   };
 
-  if (loading && !isPublicEntry) {
+  if (
+    loading &&
+    !isPublicEntry &&
+    location.pathname !== "/dashboard"
+  ) {
     return (
       <div className="min-h-screen bg-[#090e1a] flex items-center justify-center px-4">
         <p className="text-sm text-slate-300">
@@ -182,10 +200,10 @@ function App() {
         <Route
           path="/dashboard"
           element={
-            user ? (
+            user || (loading && location.pathname === "/dashboard") ? (
               <PortalShell onLogout={handleLogout}>
                 <DashboardPage
-                  user={user}
+                  user={user ?? undefined}
                   onLogout={handleLogout}
                   initialDashboardRequest={dashboardRequest ?? undefined}
                 />

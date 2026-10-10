@@ -442,9 +442,21 @@ export function AnalyticsPage() {
     return Array.from(counts.entries()).sort(([left], [right]) => left.localeCompare(right));
   }, [rangeFilteredRows]);
 
-  const totalStudiesInRange = rangeFilteredRows.reduce((total, row) => total + row.records, 0);
-  const totalViewsInRange = rangeFilteredRows.reduce((total, row) => total + row.credits, 0);
-  const instancesInRange = new Set(rangeFilteredRows.map((row) => row.instanceCode)).size;
+  const rangeSummary = useMemo(() => {
+    let totalStudies = 0;
+    let totalViews = 0;
+    const instances = new Set<string>();
+    for (const row of rangeFilteredRows) {
+      totalStudies += row.records;
+      totalViews += row.credits;
+      instances.add(row.instanceCode);
+    }
+    return {
+      totalStudies,
+      totalViews,
+      instanceCount: instances.size,
+    };
+  }, [rangeFilteredRows]);
   const modalityRows = useMemo(() => {
     const grouped = new Map<string, { records: number; credits: number }>();
     for (const row of filteredRows) {
@@ -733,11 +745,11 @@ export function AnalyticsPage() {
             <section className="analytics-kpi-grid" aria-label="Analytics summary">
               <article className="analytics-kpi-card">
                 <span>Total studies</span>
-                <strong>{numberFormat.format(totalStudiesInRange)}</strong>
+                <strong>{numberFormat.format(rangeSummary.totalStudies)}</strong>
               </article>
               <article className="analytics-kpi-card">
                 <span>Total views</span>
-                <strong>{numberFormat.format(totalViewsInRange)}</strong>
+                <strong>{numberFormat.format(rangeSummary.totalViews)}</strong>
               </article>
             </section>
 
@@ -745,7 +757,7 @@ export function AnalyticsPage() {
               <article className="analytics-panel analytics-summary-box">
                 <div className="analytics-section-heading">
                   <h2>Studies by modality</h2>
-                  <span className="analytics-section-note">{numberFormat.format(totalStudiesInRange)} total</span>
+                  <span className="analytics-section-note">{numberFormat.format(rangeSummary.totalStudies)} total</span>
                 </div>
                 <div className="analytics-summary-modality-list">
                   {modalities.map((modality, index) => (
@@ -772,7 +784,7 @@ export function AnalyticsPage() {
               <article className="analytics-panel analytics-summary-box">
                 <div className="analytics-section-heading">
                   <h2>Studies by instance</h2>
-                  <span className="analytics-section-note">{numberFormat.format(instancesInRange)} instances</span>
+                  <span className="analytics-section-note">{numberFormat.format(rangeSummary.instanceCount)} instances</span>
                 </div>
                 <div className="analytics-summary-instance-list">
                   {instanceStudyCounts.map(([instance, count]) => (

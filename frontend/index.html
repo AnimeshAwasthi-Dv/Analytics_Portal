@@ -2,6 +2,27 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      if (window.location.pathname !== "/" && window.location.pathname !== "/login") {
+        document.documentElement.classList.add("app-starting");
+      }
+    </script>
+    <style>
+      .initial-startup {
+        display: none;
+      }
+
+      .app-starting .initial-startup {
+        display: flex;
+        min-height: 100vh;
+        align-items: center;
+        justify-content: center;
+        padding: 1rem;
+        background: #090e1a;
+        color: #cbd5e1;
+        font: 14px system-ui, sans-serif;
+      }
+    </style>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
@@ -12,7 +33,11 @@
     <title>Central Sync Portal | Enterprise Admin</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="initial-startup" role="status">
+        Connecting to Central Sync Portal...
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

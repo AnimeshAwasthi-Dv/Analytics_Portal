@@ -251,6 +251,78 @@ button {
   display: none;
 }
 
+.dashboard-loading-label {
+  color: #536983;
+  font-size: 12px;
+}
+
+.dashboard-loading-card,
+.dashboard-loading-instance {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #dce8f4;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.dashboard-loading-card {
+  min-height: 112px;
+}
+
+.dashboard-loading-instance {
+  min-height: 155px;
+}
+
+.dashboard-loading-card span,
+.dashboard-loading-card strong,
+.dashboard-loading-card small,
+.dashboard-loading-instance span,
+.dashboard-loading-section-heading {
+  display: block;
+  height: 10px;
+  border-radius: 4px;
+  background: #e8eef5;
+}
+
+.dashboard-loading-card strong {
+  width: 54%;
+  height: 25px;
+}
+
+.dashboard-loading-card small {
+  width: 72%;
+}
+
+.dashboard-loading-instance span:first-child {
+  width: 68%;
+  height: 14px;
+}
+
+.dashboard-loading-instance span:nth-child(2) {
+  width: 90%;
+  margin-top: 5px;
+}
+
+.dashboard-loading-instance span:last-child {
+  width: 76%;
+  margin-top: 5px;
+}
+
+.dashboard-loading-section {
+  display: grid;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid #e1ebf5;
+  border-radius: 11px;
+  background: #fff;
+}
+
+.dashboard-loading-section-heading {
+  width: 220px;
+  height: 16px;
+}
+
 .dashboard-topbar,
 .analytics-topbar {
   border-color: var(--portal-border);

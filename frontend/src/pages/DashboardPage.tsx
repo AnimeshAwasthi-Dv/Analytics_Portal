@@ -30,27 +30,51 @@ function DashboardLoadingState({
         className={`dashboard-content mx-auto${syncDataOnly ? " sync-data-only" : ""}`}
         role="status"
       >
-        {!syncDataOnly && (
-          <header className="dashboard-topbar border-b border-slate-300 bg-white">
-            <h1 className="text-lg font-bold text-slate-900">
-              Centralized Synchronization Dashboard
-            </h1>
-            <p className="mt-1 text-xs text-slate-600">
-              Live data from the Central Sync Portal database
-            </p>
-            {userEmail && (
-              <p className="mt-1 text-xs text-slate-600">{userEmail}</p>
-            )}
-          </header>
-        )}
         {syncDataOnly ? (
           <p id="sync-data" className="py-4 text-sm text-slate-700">
             Loading synchronized records...
           </p>
         ) : (
-          <p className="py-4 text-sm text-slate-700">
-            Loading dashboard data...
-          </p>
+          <>
+            <header className="dashboard-topbar border-b border-slate-300 bg-white">
+              <h1 className="text-lg font-bold text-slate-900">
+                Centralized Synchronization Dashboard
+              </h1>
+              <p className="mt-1 text-xs text-slate-600">
+                Live data from the Central Sync Portal database
+              </p>
+              {userEmail && (
+                <p className="mt-1 text-xs text-slate-600">{userEmail}</p>
+              )}
+            </header>
+            <p className="dashboard-loading-label" aria-live="polite">
+              Loading dashboard data...
+            </p>
+            <section
+              className="dashboard-kpi-grid grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4"
+              aria-hidden="true"
+            >
+              {Array.from({ length: 4 }, (_, index) => (
+                <div className="dashboard-loading-card" key={index}>
+                  <span />
+                  <strong />
+                  <small />
+                </div>
+              ))}
+            </section>
+            <section className="dashboard-loading-section" aria-hidden="true">
+              <div className="dashboard-loading-section-heading" />
+              <div className="dashboard-instance-list grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {Array.from({ length: 4 }, (_, index) => (
+                  <div className="dashboard-loading-instance" key={index}>
+                    <span />
+                    <span />
+                    <span />
+                  </div>
+                ))}
+              </div>
+            </section>
+          </>
         )}
       </div>
     </div>
