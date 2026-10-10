@@ -22,6 +22,16 @@ CREATE TABLE IF NOT EXISTS available_bridge_studies (
     "studyDescription" TEXT
 );
 
+-- Upgrade databases created from the earlier simulator schema.
+ALTER TABLE processing_jobs
+    ADD COLUMN IF NOT EXISTS "createdAt" TIMESTAMP,
+    ADD COLUMN IF NOT EXISTS "completedAt" TIMESTAMP,
+    ADD COLUMN IF NOT EXISTS "imageCount" INTEGER,
+    ADD COLUMN IF NOT EXISTS "serviceType" VARCHAR(100);
+
+ALTER TABLE available_bridge_studies
+    ADD COLUMN IF NOT EXISTS "studyDescription" TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_processing_jobs_internal_job_id
     ON processing_jobs ("internalJobId");
 

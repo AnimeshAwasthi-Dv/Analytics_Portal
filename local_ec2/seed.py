@@ -15,7 +15,7 @@ def create_study(cur, modality, image_count, service_type, description):
     cur.execute(
         '''
         INSERT INTO studies (modality, status)
-        VALUES (%s, 'SUCCESS')
+        VALUES (%s, 'PROCESSING')
         RETURNING id
         ''',
         (modality,),
@@ -48,6 +48,15 @@ def create_study(cur, modality, image_count, service_type, description):
         VALUES (%s, %s)
         ''',
         (processing_job_id, description),
+    )
+
+    cur.execute(
+        '''
+        UPDATE studies
+        SET status = 'SUCCESS'
+        WHERE id = %s
+        ''',
+        (study_id,),
     )
 
     return study_id
@@ -88,11 +97,11 @@ def main():
                 description="MAMMOGRAPHY",
             )
 
-    print("Seed completed.")
-    print(f"CT study:  {ct_id}  -> credits_used = 1")
-    print(f"MRI study: {mri_id} -> credits_used = 1")
-    print(f"XR study:  {xr_id}  -> credits_used = 2")
-    print(f"MG study:  {mammo_id} -> credits_used = 4")
+    print("Seed completed. Successful status transitions notify the sync listener.")
+    print(f"CT study:  {ct_id}  | description=CT CHEST       | expected credits=1")
+    print(f"MRI study: {mri_id} | description=MRI BRAIN      | expected credits=1")
+    print(f"XR study:  {xr_id}  | description=CHEST X-RAY    | expected credits=2")
+    print(f"MG study:  {mammo_id} | description=MAMMOGRAPHY   | expected credits=4")
 
 
 if __name__ == "__main__":

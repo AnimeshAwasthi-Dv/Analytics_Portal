@@ -1,176 +1,146 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { Icon } from "../Components/Icon.tsx";
 import { api } from "../services/api.ts";
 import type { AnalyticsResponse } from "../types";
 
-type BreakdownMode = "modality" | "instance" | "modality-instance";
+type RangeOption = "7d" | "30d" | "90d" | "custom";
+type Granularity = "daily" | "weekly" | "monthly";
 type AnalyticsRow = {
-  category: string;
+  date: string;
+  modality: string;
+  instanceCode: string;
   records: number;
   credits: number;
 };
 type TrendPoint = {
   key: string;
   label: string;
-  records: number;
-  credits: number;
 };
-
-function TrendChart({ data, title }: { data: TrendPoint[]; title: string }) {
-  const width = 360;
-  const height = 112;
-  const left = 30;
-  const right = 8;
-  const top = 8;
-  const bottom = 20;
-  const plotWidth = width - left - right;
-  const plotHeight = height - top - bottom;
-  const maximum = Math.max(
-    1,
-    ...data.flatMap((point) => [point.records, point.credits])
-  );
-  const pointsFor = (value: "records" | "credits") =>
-    data
-      .map((point, index) => {
-        const x = left + (data.length <= 1 ? plotWidth / 2 : (index / (data.length - 1)) * plotWidth);
-        const y = top + plotHeight - (point[value] / maximum) * plotHeight;
-        return `${x},${y}`;
-      })
-      .join(" ");
-
-  return (
-    <div>
-      <svg
-        className="analytics-mini-chart"
-        viewBox={`0 0 ${width} ${height}`}
-        role="img"
-        aria-label={`${title}: line chart for records and credits`}
-      >
-        {[0, 0.5, 1].map((fraction) => {
-          const y = top + plotHeight * fraction;
-          return (
-            <g key={fraction}>
-              <line x1={left} y1={y} x2={width - right} y2={y} stroke="#e5e7eb" />
-              <text x={left - 5} y={y + 3} textAnchor="end" className="analytics-chart-label">
-                {Math.round(maximum * (1 - fraction))}
-              </text>
-            </g>
-          );
-        })}
-        <polyline
-          points={pointsFor("records")}
-          fill="none"
-          stroke="#1765e9"
-          strokeWidth="2"
-          vectorEffect="non-scaling-stroke"
-        />
-        <polyline
-          points={pointsFor("credits")}
-          fill="none"
-          stroke="#16805d"
-          strokeWidth="2"
-          strokeDasharray="4 3"
-          vectorEffect="non-scaling-stroke"
-        />
-        {data.map((point, index) => {
-          const x = left + (data.length <= 1 ? plotWidth / 2 : (index / (data.length - 1)) * plotWidth);
-          const y = top + plotHeight - (point.records / maximum) * plotHeight;
-          return <circle key={point.key} cx={x} cy={y} r="2" fill="#1765e9"><title>{`${point.label}: ${point.records} records, ${point.credits} credits`}</title></circle>;
-        })}
-        {data.length > 0 && (
-          <>
-            <text x={left} y={height - 3} className="analytics-chart-label">{data[0].label}</text>
-            <text x={width - right} y={height - 3} textAnchor="end" className="analytics-chart-label">{data[data.length - 1].label}</text>
-          </>
-        )}
-      </svg>
-      <div className="analytics-chart-legend" aria-hidden="true">
-        <span><i className="records" />Records</span>
-        <span><i className="credits" />Credits</span>
-      </div>
-    </div>
-  );
-}
+type TrendSeries = { key: string; label: string; color: string; values: number[] };
 
 const numberFormat = new Intl.NumberFormat();
+const rangeDays: Record<Exclude<RangeOption, "custom">, number> = {
+  "7d": 7,
+  "30d": 30,
+  "90d": 90,
+};
+const modalityColors = ["#1765e9", "#16805d", "#9333ea", "#f08a12", "#0891b2"];
 
 function dateKey(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-function periodStart(date: Date, period: "daily" | "weekly" | "monthly"): Date {
-  const start = new Date(
-    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
-  );
-  if (period === "weekly") {
-    start.setUTCDate(start.getUTCDate() - ((start.getUTCDay() + 6) % 7));
-  } else if (period === "monthly") {
-    start.setUTCDate(1);
-  }
-  return start;
+function dateLabel(value: string, options?: Intl.DateTimeFormatOptions): string {
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleDateString(undefined, { timeZone: "UTC", ...options });
 }
 
-function buildTrend(
-  analytics: AnalyticsResponse,
-  period: "daily" | "weekly" | "monthly",
-  modality: string,
-  instance: string
-): TrendPoint[] {
-  const now = new Date();
-  const currentPeriod = periodStart(now, period);
-  const count = period === "daily" ? 30 : 12;
-  const firstPeriod = new Date(currentPeriod);
+function initialDateRange(): { start: string; end: string } {
+  const end = new Date();
+  const start = new Date(end);
+  start.setUTCDate(start.getUTCDate() - 29);
+  return { start: dateKey(start), end: dateKey(end) };
+}
 
-  if (period === "daily") {
-    firstPeriod.setUTCDate(firstPeriod.getUTCDate() - count + 1);
-  } else if (period === "weekly") {
-    firstPeriod.setUTCDate(firstPeriod.getUTCDate() - 7 * (count - 1));
-  } else {
-    firstPeriod.setUTCMonth(firstPeriod.getUTCMonth() - (count - 1));
+function startOfPeriod(date: Date, granularity: Granularity): Date {
+  const result = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  if (granularity === "weekly") {
+    result.setUTCDate(result.getUTCDate() - ((result.getUTCDay() + 6) % 7));
+  } else if (granularity === "monthly") {
+    result.setUTCDate(1);
   }
+  return result;
+}
 
-  const bucketStart = (date: Date): Date => periodStart(date, period);
-  const totals = new Map<string, { records: number; credits: number }>();
+function TrendChart({
+  points,
+  series,
+}: {
+  points: TrendPoint[];
+  series: TrendSeries[];
+}) {
+  const width = 1000;
+  const height = 190;
+  const left = 34;
+  const right = 8;
+  const top = 10;
+  const bottom = 32;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const maximum = Math.max(1, ...series.flatMap((line) => line.values));
+  const xFor = (index: number) =>
+    left + (points.length <= 1 ? plotWidth / 2 : (index / (points.length - 1)) * plotWidth);
+  const yFor = (value: number) => top + plotHeight - (value / maximum) * plotHeight;
+  const labelIndexes = Array.from(
+    new Set(
+      Array.from({ length: Math.min(7, points.length) }, (_, index) =>
+        Math.round((index / Math.max(1, Math.min(7, points.length) - 1)) * (points.length - 1))
+      )
+    )
+  );
 
-  for (const row of analytics.daily) {
-    if (
-      (modality !== "ALL" &&
-        row.modality.toLocaleUpperCase() !== modality.toLocaleUpperCase()) ||
-      (instance !== "ALL" && row.instanceCode !== instance)
-    ) {
-      continue;
-    }
-
-    const parsedDate = new Date(`${row.date}T00:00:00Z`);
-    if (Number.isNaN(parsedDate.getTime())) continue;
-    const key = dateKey(bucketStart(parsedDate));
-    const total = totals.get(key) ?? { records: 0, credits: 0 };
-    total.records += row.records;
-    total.credits += row.credits;
-    totals.set(key, total);
-  }
-
-  return Array.from({ length: count }, (_, index) => {
-    const date = new Date(firstPeriod);
-    if (period === "daily") {
-      date.setUTCDate(date.getUTCDate() + index);
-    } else if (period === "weekly") {
-      date.setUTCDate(date.getUTCDate() + 7 * index);
-    } else {
-      date.setUTCMonth(date.getUTCMonth() + index);
-    }
-
-    const key = dateKey(date);
-    const total = totals.get(key) ?? { records: 0, credits: 0 };
-    const label =
-      period === "daily"
-        ? date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })
-        : period === "weekly"
-        ? date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })
-        : date.toLocaleDateString(undefined, { month: "short", year: "2-digit", timeZone: "UTC" });
-    return { key, label, ...total };
-  });
+  return (
+    <div className="analytics-trend">
+      {points.length && series.length ? (
+        <svg
+          className="analytics-mini-chart"
+          viewBox={`0 0 ${width} ${height}`}
+          role="img"
+          aria-label="Line chart showing analytics trends"
+        >
+          {[0, 0.5, 1].map((fraction) => {
+            const y = top + plotHeight * fraction;
+            return (
+              <g key={fraction}>
+                <line x1={left} y1={y} x2={width - right} y2={y} stroke="#e4edf7" />
+                <text x={left - 7} y={y + 3} textAnchor="end" className="analytics-chart-label">
+                  {Math.round(maximum * (1 - fraction))}
+                </text>
+              </g>
+            );
+          })}
+          {series.map((line) => (
+            <g key={line.key}>
+              <polyline
+                points={line.values.map((value, index) => `${xFor(index)},${yFor(value)}`).join(" ")}
+                fill="none"
+                stroke={line.color}
+                strokeWidth="2"
+                vectorEffect="non-scaling-stroke"
+              />
+              {line.values.map((value, index) => (
+                <circle key={`${line.key}-${points[index].key}`} cx={xFor(index)} cy={yFor(value)} r="2" fill={line.color}>
+                  <title>{`${points[index].label}: ${line.label}, ${numberFormat.format(value)}`}</title>
+                </circle>
+              ))}
+            </g>
+          ))}
+          {labelIndexes.map((index) => (
+            <text
+              key={points[index].key}
+              x={xFor(index)}
+              y={height - 4}
+              textAnchor={index === 0 ? "start" : index === points.length - 1 ? "end" : "middle"}
+              className="analytics-chart-label"
+            >
+              {points[index].label}
+            </text>
+          ))}
+        </svg>
+      ) : (
+        <p className="analytics-empty">No trend data for this date range.</p>
+      )}
+      <div className="analytics-chart-legend" aria-hidden="true">
+        {series.map((line) => (
+          <span key={line.key}><i style={{ backgroundColor: line.color }} />{line.label}</span>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function csvCell(value: string | number): string {
@@ -181,15 +151,40 @@ function csvCell(value: string | number): string {
   return `"${safeText.replaceAll('"', '""')}"`;
 }
 
+function percentDifference(first: number, second: number): string {
+  const baseline = Math.min(first, second);
+  const difference = Math.max(first, second) - baseline;
+  if (difference === 0) return "0%";
+  if (baseline === 0) return "New";
+  return `+${Math.round((difference / baseline) * 100)}%`;
+}
+
 export function AnalyticsPage() {
+  const initialRange = useMemo(() => initialDateRange(), []);
   const [analytics, setAnalytics] = useState<AnalyticsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [selectedModality, setSelectedModality] = useState("ALL");
   const [selectedInstance, setSelectedInstance] = useState("ALL");
-  const [breakdownMode, setBreakdownMode] =
-    useState<BreakdownMode>("modality");
+  const [deepDiveModality, setDeepDiveModality] = useState("");
+  const [rangeOption, setRangeOption] = useState<RangeOption>("30d");
+  const [granularity, setGranularity] = useState<Granularity>("daily");
+  const [startDate, setStartDate] = useState(initialRange.start);
+  const [endDate, setEndDate] = useState(initialRange.end);
+  const dateRangeInvalid = Boolean(startDate && endDate && endDate < startDate);
+
+  const showError = (requestError: unknown) => {
+    const message = requestError as {
+      response?: { data?: { detail?: string } };
+      message?: string;
+    };
+    setError(
+      message.response?.data?.detail ??
+        message.message ??
+        "Unable to load analytics from the portal database."
+    );
+  };
 
   const loadAnalytics = useCallback(async () => {
     setRefreshing(true);
@@ -197,15 +192,7 @@ export function AnalyticsPage() {
     try {
       setAnalytics(await api.getAnalytics());
     } catch (requestError) {
-      const message = requestError as {
-        response?: { data?: { detail?: string } };
-        message?: string;
-      };
-      setError(
-        message.response?.data?.detail ??
-          message.message ??
-          "Unable to load analytics from the portal database."
-      );
+      showError(requestError);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -219,16 +206,7 @@ export function AnalyticsPage() {
         if (active) setAnalytics(response);
       })
       .catch((requestError: unknown) => {
-        if (!active) return;
-        const message = requestError as {
-          response?: { data?: { detail?: string } };
-          message?: string;
-        };
-        setError(
-          message.response?.data?.detail ??
-            message.message ??
-            "Unable to load analytics from the portal database."
-        );
+        if (active) showError(requestError);
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -238,91 +216,256 @@ export function AnalyticsPage() {
     };
   }, []);
 
-  const modalities = analytics?.availableModalities ?? [];
+  const modalities = useMemo(
+    () => analytics?.availableModalities ?? [],
+    [analytics]
+  );
   const instances = useMemo(
     () =>
-      Array.from(
-        new Set((analytics?.byInstance ?? []).map((row) => row.instanceCode))
-      ).sort((a, b) => a.localeCompare(b)),
+      Array.from(new Set((analytics?.byInstance ?? []).map((row) => row.instanceCode)))
+        .sort((a, b) => a.localeCompare(b)),
     [analytics]
+  );
+
+  const rangeFilteredRows = useMemo<AnalyticsRow[]>(
+    () =>
+      (analytics?.daily ?? [])
+        .filter(
+          (row) =>
+            Boolean(startDate && endDate) &&
+            !dateRangeInvalid &&
+            row.date >= startDate &&
+            row.date <= endDate &&
+            (selectedInstance === "ALL" || row.instanceCode === selectedInstance)
+        )
+        .map((row) => ({
+          date: row.date,
+          modality: row.modality,
+          instanceCode: row.instanceCode,
+          records: row.records,
+          credits: row.credits,
+        })),
+    [analytics, dateRangeInvalid, endDate, selectedInstance, startDate]
   );
 
   const filteredRows = useMemo(
     () =>
-      (analytics?.byInstance ?? []).filter(
+      rangeFilteredRows.filter(
         (row) =>
-          (selectedModality === "ALL" ||
-            row.modality.toLocaleUpperCase() ===
-              selectedModality.toLocaleUpperCase()) &&
-          (selectedInstance === "ALL" ||
-            row.instanceCode === selectedInstance)
+          selectedModality === "ALL" ||
+          row.modality.toLocaleUpperCase() === selectedModality.toLocaleUpperCase()
       ),
-    [analytics, selectedInstance, selectedModality]
+    [rangeFilteredRows, selectedModality]
   );
-
-  const breakdown = useMemo<AnalyticsRow[]>(() => {
-    const grouped = new Map<string, AnalyticsRow>();
-    for (const row of filteredRows) {
-      const category =
-        breakdownMode === "modality"
-          ? row.modality
-          : breakdownMode === "instance"
-          ? row.instanceCode
-          : `${row.modality} / ${row.instanceCode}`;
-      const total = grouped.get(category) ?? {
-        category,
-        records: 0,
-        credits: 0,
-      };
-      total.records += row.records;
-      total.credits += row.credits;
-      grouped.set(category, total);
-    }
-    return Array.from(grouped.values()).sort(
-      (a, b) => b.records - a.records || a.category.localeCompare(b.category)
-    );
-  }, [breakdownMode, filteredRows]);
 
   const summary = useMemo(
     () => ({
-      records: breakdown.reduce((total, row) => total + row.records, 0),
-      credits: breakdown.reduce((total, row) => total + row.credits, 0),
-      modalities: new Set(filteredRows.map((row) => row.modality)).size,
+      records: filteredRows.reduce((total, row) => total + row.records, 0),
+      credits: filteredRows.reduce((total, row) => total + row.credits, 0),
       instances: new Set(filteredRows.map((row) => row.instanceCode)).size,
     }),
-    [breakdown, filteredRows]
+    [filteredRows]
   );
 
-  const dailyTrend = useMemo(
-    () => analytics && buildTrend(analytics, "daily", selectedModality, selectedInstance),
-    [analytics, selectedInstance, selectedModality]
+  const receivedModalities = useMemo(
+    () =>
+      modalities.filter((modality) =>
+        rangeFilteredRows.some(
+          (row) => row.modality.toLocaleUpperCase() === modality.toLocaleUpperCase()
+        )
+      ),
+    [modalities, rangeFilteredRows]
   );
-  const weeklyTrend = useMemo(
-    () => analytics && buildTrend(analytics, "weekly", selectedModality, selectedInstance),
-    [analytics, selectedInstance, selectedModality]
+
+  const modalityRows = useMemo(() => {
+    const grouped = new Map<string, { records: number; credits: number }>();
+    for (const row of filteredRows) {
+      const total = grouped.get(row.modality) ?? { records: 0, credits: 0 };
+      total.records += row.records;
+      total.credits += row.credits;
+      grouped.set(row.modality, total);
+    }
+    return Array.from(grouped, ([modality, total]) => ({ modality, ...total }))
+      .sort((a, b) => b.records - a.records || a.modality.localeCompare(b.modality));
+  }, [filteredRows]);
+
+  const activeDeepDive =
+    deepDiveModality || modalityRows[0]?.modality || modalities[0] || "";
+
+  const trendPoints = useMemo<TrendPoint[]>(() => {
+    if (!startDate || !endDate || endDate < startDate) return [];
+    const points: TrendPoint[] = [];
+    const cursor = startOfPeriod(new Date(`${startDate}T00:00:00Z`), granularity);
+    const end = startOfPeriod(new Date(`${endDate}T00:00:00Z`), granularity);
+    while (cursor <= end) {
+      const key = dateKey(cursor);
+      points.push({
+        key,
+        label: dateLabel(
+          key,
+          granularity === "monthly"
+            ? { month: "short", year: "2-digit" }
+            : { month: "short", day: "numeric" }
+        ),
+      });
+      if (granularity === "daily") cursor.setUTCDate(cursor.getUTCDate() + 1);
+      else if (granularity === "weekly") cursor.setUTCDate(cursor.getUTCDate() + 7);
+      else cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+    }
+    return points;
+  }, [endDate, granularity, startDate]);
+
+  const trendTotals = useMemo(() => {
+    const totals = new Map<string, { records: number; credits: number }>();
+    for (const row of filteredRows) {
+      const bucket = dateKey(startOfPeriod(new Date(`${row.date}T00:00:00Z`), granularity));
+      const key = `${bucket}\u0000${row.modality}`;
+      const total = totals.get(key) ?? { records: 0, credits: 0 };
+      total.records += row.records;
+      total.credits += row.credits;
+      totals.set(key, total);
+    }
+    return totals;
+  }, [filteredRows, granularity]);
+
+  const deepDiveTotals = useMemo(() => {
+    const totals = new Map<string, { records: number; credits: number }>();
+    for (const row of rangeFilteredRows) {
+      const bucket = dateKey(startOfPeriod(new Date(`${row.date}T00:00:00Z`), granularity));
+      const key = `${bucket}\u0000${row.modality}`;
+      const total = totals.get(key) ?? { records: 0, credits: 0 };
+      total.records += row.records;
+      total.credits += row.credits;
+      totals.set(key, total);
+    }
+    return totals;
+  }, [granularity, rangeFilteredRows]);
+
+  const trendSeries = useMemo<TrendSeries[]>(
+    () =>
+      modalities
+        .filter((modality) => selectedModality === "ALL" || modality === selectedModality)
+        .map((modality) => ({
+          key: modality,
+          label: modality,
+          color: modalityColors[modalities.indexOf(modality) % modalityColors.length],
+          values: trendPoints.map(
+            (point) => trendTotals.get(`${point.key}\u0000${modality}`)?.records ?? 0
+          ),
+        })),
+    [modalities, selectedModality, trendPoints, trendTotals]
   );
-  const monthlyTrend = useMemo(
-    () => analytics && buildTrend(analytics, "monthly", selectedModality, selectedInstance),
-    [analytics, selectedInstance, selectedModality]
+
+  const deepDiveTrendSeries = useMemo<TrendSeries[]>(
+    () => [
+      {
+        key: "records",
+        label: "Study",
+        color: "#1765e9",
+        values: trendPoints.map(
+          (point) => deepDiveTotals.get(`${point.key}\u0000${activeDeepDive}`)?.records ?? 0
+        ),
+      },
+      {
+        key: "credits",
+        label: "Views",
+        color: "#16805d",
+        values: trendPoints.map(
+          (point) => deepDiveTotals.get(`${point.key}\u0000${activeDeepDive}`)?.credits ?? 0
+        ),
+      },
+    ],
+    [activeDeepDive, deepDiveTotals, trendPoints]
   );
+
+  const instanceComparison = useMemo(() => {
+    const grouped = new Map<string, Map<string, { records: number; credits: number }>>();
+    for (const row of rangeFilteredRows) {
+      const byInstance = grouped.get(row.modality) ?? new Map();
+      const total = byInstance.get(row.instanceCode) ?? { records: 0, credits: 0 };
+      total.records += row.records;
+      total.credits += row.credits;
+      byInstance.set(row.instanceCode, total);
+      grouped.set(row.modality, byInstance);
+    }
+    const compareInstances = instances.filter(
+      (instance) => selectedInstance === "ALL" || selectedInstance === instance
+    );
+    const rows = Array.from(grouped, ([modality, byInstance]) => ({
+      modality,
+      values: compareInstances.map(
+        (instance) => byInstance.get(instance) ?? { records: 0, credits: 0 }
+      ),
+    })).sort((a, b) => {
+      const aTotal = a.values.reduce((sum, value) => sum + value.records, 0);
+      const bTotal = b.values.reduce((sum, value) => sum + value.records, 0);
+      return bTotal - aTotal || a.modality.localeCompare(b.modality);
+    });
+    return { instances: compareInstances, rows };
+  }, [instances, rangeFilteredRows, selectedInstance]);
+
+  const deepDiveRows = useMemo(() => {
+    const grouped = new Map<string, { records: number; credits: number }>();
+    for (const row of rangeFilteredRows) {
+      if (row.modality !== activeDeepDive) continue;
+      const total = grouped.get(row.instanceCode) ?? { records: 0, credits: 0 };
+      total.records += row.records;
+      total.credits += row.credits;
+      grouped.set(row.instanceCode, total);
+    }
+    return Array.from(grouped, ([instanceCode, total]) => ({ instanceCode, ...total }))
+      .sort((a, b) => b.records - a.records || a.instanceCode.localeCompare(b.instanceCode));
+  }, [activeDeepDive, rangeFilteredRows]);
+  const deepDiveTotal = deepDiveRows.reduce((total, row) => total + row.records, 0);
+  const lastSyncByInstance = useMemo(() => {
+    const latest = new Map<string, string>();
+    for (const row of analytics?.daily ?? []) {
+      if (!latest.has(row.instanceCode) || row.date > latest.get(row.instanceCode)!) {
+        latest.set(row.instanceCode, row.date);
+      }
+    }
+    return latest;
+  }, [analytics]);
+
+  const handleRangeChange = (value: RangeOption) => {
+    setRangeOption(value);
+    if (value === "custom") return;
+    const end = new Date();
+    const start = new Date(end);
+    start.setUTCDate(start.getUTCDate() - rangeDays[value] + 1);
+    setStartDate(dateKey(start));
+    setEndDate(dateKey(end));
+  };
 
   const downloadCsv = () => {
-    const totalRecords = summary.records;
     const rows: Array<Array<string | number>> = [
-      ["Metric", "Value"],
-      ["Modality filter", selectedModality === "ALL" ? "All modalities" : selectedModality],
-      ["Instance filter", selectedInstance === "ALL" ? "All instances" : selectedInstance],
-      ["Saved records", summary.records],
-      ["Credits used", summary.credits],
+      ["Sync analytics"],
+      ["From", startDate, "To", endDate],
+      ["Studies", summary.records, "Views", summary.credits],
       [],
-      ["Breakdown", "Category", "Records", "Credits", "Share of records"],
-      ...breakdown.map((row) => [
-        breakdownMode,
-        row.category,
+      ["Modality overview", "Study", "Views", "Share"],
+      ...modalityRows.map((row) => [
+        row.modality,
         row.records,
         row.credits,
-        totalRecords ? `${((row.records / totalRecords) * 100).toFixed(1)}%` : "0.0%",
+        summary.records ? `${((row.records / summary.records) * 100).toFixed(1)}%` : "0.0%",
       ]),
+      [],
+      [
+        "Instance comparison",
+        ...instanceComparison.instances.flatMap((instance) => [`${instance} studies`, `${instance} views`]),
+        "Difference",
+      ],
+      ...instanceComparison.rows.map((row) => {
+        const records = row.values.map((value) => value.records);
+        const positive = Math.max(...records);
+        const baseline = Math.min(...records);
+        return [
+          row.modality,
+          ...row.values.flatMap((value) => [value.records, value.credits]),
+          percentDifference(positive, baseline),
+        ];
+      }),
     ];
     const csv = `\uFEFF${rows.map((row) => row.map(csvCell).join(",")).join("\r\n")}`;
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
@@ -334,56 +477,80 @@ export function AnalyticsPage() {
   };
 
   const cards = [
-    { label: "Saved records", value: summary.records },
-    { label: "Credits used", value: summary.credits },
-    { label: "Modalities", value: summary.modalities },
-    { label: "Source instances", value: summary.instances },
+    {
+      label: "Source instances",
+      value: summary.instances,
+      detail: instances.join("  •  ") || "No instances in this range",
+      icon: "database" as const,
+    },
+    {
+      label: "Modalities received",
+      value: receivedModalities.length,
+      detail: receivedModalities.join("  •  ") || "No modalities in this range",
+      icon: "activity" as const,
+    },
   ];
 
-  const trendCards = [
-    { title: "Daily · last 30 days", data: dailyTrend ?? [] },
-    { title: "Weekly · last 12 weeks", data: weeklyTrend ?? [] },
-    { title: "Monthly · last 12 months", data: monthlyTrend ?? [] },
-  ];
+  const comparisonModalities = modalities;
 
   return (
     <main className="analytics-page min-h-screen">
-      <div className="analytics-content mx-auto max-w-7xl p-5 sm:p-6">
-        <header className="analytics-topbar flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-5">
-          <div>
-            <Link
-              to="/dashboard"
-              className="mb-2 inline-flex text-xs font-semibold text-slate-600 hover:text-slate-900"
-            >
-              Back to dashboard
-            </Link>
-            <h1 className="text-xl font-bold text-slate-900">Sync analytics</h1>
-            <p className="mt-1 text-xs text-slate-600">
-              Record and credit trends, grouped by modality or source instance.
+      <div className="analytics-content">
+        <header className="analytics-header">
+          <div className="analytics-heading">
+            <p className="analytics-breadcrumb">
+              <Link to="/dashboard">Dashboard</Link><span>/</span>Sync analytics
+            </p>
+            <h1>Sync analytics</h1>
+            <p className="analytics-subtitle">
+              {selectedInstance === "ALL" ? "All instances" : selectedInstance}
+              <span>•</span>
+              {selectedModality === "ALL" ? "modality overview" : selectedModality}
             </p>
           </div>
 
-          <div className="flex flex-wrap items-end gap-2">
-            <label className="text-[11px] font-semibold text-slate-600">
-              Modality
+          <div className="analytics-controls">
+            <label>
+              <span>Quick range</span>
               <select
-                value={selectedModality}
-                onChange={(event) => setSelectedModality(event.target.value)}
-                className="ml-2 rounded border border-slate-300 bg-white px-2 py-2 text-xs"
+                value={rangeOption}
+                onChange={(event) => handleRangeChange(event.target.value as RangeOption)}
               >
-                <option value="ALL">All modalities</option>
-                {modalities.map((modality) => (
-                  <option key={modality} value={modality}>{modality}</option>
-                ))}
+                <option value="7d">Last 7 days</option>
+                <option value="30d">Last 30 days</option>
+                <option value="90d">Last 90 days</option>
+                <option value="custom">Custom range</option>
               </select>
             </label>
-
-            <label className="text-[11px] font-semibold text-slate-600">
-              Instance
+            <label>
+              <span>From</span>
+              <input
+                type="date"
+                value={startDate}
+                max={endDate || undefined}
+                onChange={(event) => {
+                  setStartDate(event.target.value);
+                  setRangeOption("custom");
+                }}
+              />
+            </label>
+            <label>
+              <span>To</span>
+              <input
+                type="date"
+                value={endDate}
+                min={startDate || undefined}
+                onChange={(event) => {
+                  setEndDate(event.target.value);
+                  setRangeOption("custom");
+                }}
+              />
+            </label>
+            <label>
+              <span>Instance</span>
               <select
                 value={selectedInstance}
                 onChange={(event) => setSelectedInstance(event.target.value)}
-                className="ml-2 rounded border border-slate-300 bg-white px-2 py-2 text-xs"
               >
                 <option value="ALL">All instances</option>
                 {instances.map((instance) => (
@@ -391,117 +558,259 @@ export function AnalyticsPage() {
                 ))}
               </select>
             </label>
-
-            {analytics?.lastUpdated && (
-              <span className="px-1 text-[11px] text-slate-500">
-                Updated {new Date(analytics.lastUpdated).toLocaleTimeString()}
-              </span>
-            )}
+            <label>
+              <span>Modality</span>
+              <select
+                value={selectedModality}
+                onChange={(event) => setSelectedModality(event.target.value)}
+              >
+                <option value="ALL">All modalities</option>
+                {modalities.map((modality) => (
+                  <option key={modality} value={modality}>{modality}</option>
+                ))}
+              </select>
+            </label>
             <button
               type="button"
+              className="analytics-button"
               onClick={() => void loadAnalytics()}
               disabled={refreshing || loading}
-              className="rounded border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 disabled:opacity-60"
             >
-              {refreshing ? "Refreshing..." : "Refresh"}
+              <span aria-hidden="true">↻</span>{refreshing ? "Refreshing..." : "Refresh"}
             </button>
             <button
               type="button"
+              className="analytics-button analytics-button-primary"
               onClick={downloadCsv}
-              disabled={!breakdown.length}
-              className="rounded bg-blue-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+              disabled={!analytics}
             >
-              Download CSV
+              <span aria-hidden="true">↓</span>Export CSV
             </button>
           </div>
         </header>
 
         {error && (
-          <div role="alert" className="rounded border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+          <div role="alert" className="analytics-error">
             <strong>Analytics unavailable:</strong> {error}
+          </div>
+        )}
+        {dateRangeInvalid && (
+          <div role="alert" className="analytics-error">
+            The end date must be on or after the start date.
           </div>
         )}
 
         {loading && !analytics ? (
-          <p className="rounded border border-slate-200 bg-white p-5 text-sm text-slate-600">
-            Loading saved portal data...
-          </p>
+          <p className="analytics-panel analytics-loading">Loading saved portal data...</p>
         ) : analytics ? (
           <>
-            <section
-              className="analytics-kpi-grid grid grid-cols-2 gap-3 lg:grid-cols-4"
-              aria-label="Filtered analytics summary"
-            >
-              {cards.map(({ label, value }) => (
-                <article key={label} className="analytics-kpi-card rounded border border-slate-200 bg-white p-3">
-                  <p className="text-xs text-slate-600">{label}</p>
-                  <p className="mt-2 font-mono text-2xl font-bold text-slate-900">
-                    {numberFormat.format(value)}
-                  </p>
+            <section className="analytics-kpi-grid" aria-label="Filtered analytics summary">
+              {cards.map(({ label, value, detail, icon }) => (
+                <article key={label} className="analytics-kpi-card">
+                  <span className="analytics-kpi-icon"><Icon name={icon} /></span>
+                  <div>
+                    <p>{label}</p>
+                    <strong>{numberFormat.format(value)}</strong>
+                    <small>{detail}</small>
+                  </div>
                 </article>
               ))}
             </section>
 
-            <section className="grid grid-cols-1 gap-3 lg:grid-cols-3" aria-label="Record trends">
-              {trendCards.map(({ title, data }) => (
-                <article key={title} className="analytics-chart-card min-w-0 rounded border border-slate-200 bg-white p-3">
-                  <h2 className="mb-2 text-xs font-bold text-slate-800">{title}</h2>
-                  <TrendChart data={data} title={title} />
-                </article>
-              ))}
-            </section>
-
-            <section className="analytics-breakdown overflow-x-auto rounded border border-slate-200 bg-white">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
-                <div>
-                  <h2 className="text-sm font-bold text-slate-900">Records breakdown</h2>
-                  <p className="mt-1 text-[11px] text-slate-600">
-                    {numberFormat.format(summary.records)} records · {numberFormat.format(summary.credits)} credits
-                  </p>
+            <section className="analytics-panel analytics-main-chart" aria-label="Studies over time by modality">
+              <div className="analytics-section-heading">
+                <h2>Total studies trend</h2>
+                <div className="analytics-chart-controls">
+                  <div className="analytics-granularity-tabs" role="group" aria-label="Trend interval">
+                    {(["daily", "weekly", "monthly"] as const).map((period) => (
+                      <button
+                        key={period}
+                        type="button"
+                        aria-pressed={granularity === period}
+                        className={granularity === period ? "active" : ""}
+                        onClick={() => setGranularity(period)}
+                      >
+                        {period[0].toUpperCase() + period.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="analytics-chart-range">
+                    <span>{dateLabel(startDate, { month: "short", day: "numeric", year: "numeric" })}</span>
+                    <span>–</span>
+                    <span>{dateLabel(endDate, { month: "short", day: "numeric", year: "numeric" })}</span>
+                  </div>
                 </div>
-                <label className="text-xs font-semibold text-slate-700">
-                  Group by
-                  <select
-                    value={breakdownMode}
-                    onChange={(event) => setBreakdownMode(event.target.value as BreakdownMode)}
-                    className="ml-2 rounded border border-slate-300 bg-white px-2 py-2 text-xs"
-                  >
-                    <option value="modality">Modality</option>
-                    <option value="instance">Instance</option>
-                    <option value="modality-instance">Modality + instance</option>
-                  </select>
-                </label>
               </div>
-              {breakdown.length ? (
-                <table className="w-full min-w-[520px] text-left text-xs">
-                  <thead className="bg-slate-50 text-slate-600">
+              {!dateRangeInvalid && <TrendChart points={trendPoints} series={trendSeries} />}
+            </section>
+
+            <section className="analytics-panel analytics-table-panel">
+              <div className="analytics-section-heading">
+                <h2>Instance comparison</h2>
+                <span className="analytics-section-note">
+                  {selectedInstance === "ALL" ? "Comparing all instances" : `Comparing ${selectedInstance}`}
+                </span>
+              </div>
+              <div className="analytics-table-scroll">
+                <table className="analytics-table analytics-comparison-table">
+                  <thead>
                     <tr>
-                      <th className="px-4 py-2 font-semibold">Category</th>
-                      <th className="px-4 py-2 font-semibold">Records</th>
-                      <th className="px-4 py-2 font-semibold">Credits</th>
-                      <th className="px-4 py-2 font-semibold">Share</th>
+                      <th rowSpan={2}>Instance</th>
+                      {comparisonModalities.map((modality) => (
+                        <th
+                          key={modality}
+                          colSpan={2}
+                          style={{ borderTop: `3px solid ${modalityColors[modalities.indexOf(modality) % modalityColors.length]}` }}
+                        >
+                          <span className="analytics-modality-name">
+                            <i style={{ backgroundColor: modalityColors[modalities.indexOf(modality) % modalityColors.length] }} />
+                            {modality}
+                          </span>
+                        </th>
+                      ))}
+                    </tr>
+                    <tr>
+                      {comparisonModalities.map((modality) => (
+                        <Fragment key={`${modality}-metrics`}>
+                          <th>Study</th><th>Views</th>
+                        </Fragment>
+                      ))}
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {breakdown.map((row) => (
-                      <tr key={row.category} className="text-slate-700">
-                        <td className="px-4 py-2 font-medium">{row.category}</td>
-                        <td className="px-4 py-2">{numberFormat.format(row.records)}</td>
-                        <td className="px-4 py-2">{numberFormat.format(row.credits)}</td>
-                        <td className="px-4 py-2">
-                          {summary.records
-                            ? `${((row.records / summary.records) * 100).toFixed(1)}%`
-                            : "0.0%"}
-                        </td>
+                  <tbody>
+                    {instanceComparison.instances.map((instance, instanceIndex) => (
+                      <tr key={instance}>
+                        <th scope="row">{instance}</th>
+                        {comparisonModalities.map((modality) => {
+                          const row = instanceComparison.rows.find((item) => item.modality === modality);
+                          const total = row?.values[instanceIndex] ?? { records: 0, credits: 0 };
+                          return (
+                            <Fragment key={`${instance}-${modality}`}>
+                              <td>{numberFormat.format(total.records)}</td>
+                              <td>{numberFormat.format(total.credits)}</td>
+                            </Fragment>
+                          );
+                        })}
                       </tr>
                     ))}
+                    {!instanceComparison.instances.length && (
+                      <tr>
+                        <td className="analytics-empty-cell" colSpan={Math.max(1, comparisonModalities.length * 2 + 1)}>
+                          No records match these filters.
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
+                  {instanceComparison.instances.length > 0 && (
+                    <tfoot>
+                      <tr>
+                        <th>Total</th>
+                        {comparisonModalities.map((modality) => {
+                          const row = instanceComparison.rows.find((item) => item.modality === modality);
+                          const total = (row?.values ?? []).reduce(
+                            (sum, value) => ({
+                              records: sum.records + value.records,
+                              credits: sum.credits + value.credits,
+                            }),
+                            { records: 0, credits: 0 }
+                          );
+                          return (
+                            <Fragment key={`${modality}-total`}>
+                              <th>{numberFormat.format(total.records)}</th>
+                              <th>{numberFormat.format(total.credits)}</th>
+                            </Fragment>
+                          );
+                        })}
+                      </tr>
+                    </tfoot>
+                  )}
                 </table>
-              ) : (
-                <p className="px-4 py-8 text-center text-sm text-slate-600">
-                  No records match the selected filters.
-                </p>
-              )}
+              </div>
+            </section>
+
+            <section className="analytics-panel analytics-deep-dive">
+              <div className="analytics-section-heading analytics-deep-heading">
+                <div>
+                  <h2>Modality deep dive</h2>
+                  <p>Showing all instances in the selected date range.</p>
+                </div>
+                <div className="analytics-modality-tabs" role="tablist" aria-label="Select modality">
+                  {modalities.map((modality) => (
+                    <button
+                      key={modality}
+                      type="button"
+                      role="tab"
+                      aria-selected={activeDeepDive === modality}
+                      className={activeDeepDive === modality ? "active" : ""}
+                      onClick={() => setDeepDiveModality(modality)}
+                    >
+                      {modality}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="analytics-deep-grid">
+                <div className="analytics-deep-chart">
+                  <div className="analytics-section-heading">
+                    <h3>{activeDeepDive || "Modality"} trend</h3>
+                  </div>
+                  <TrendChart points={trendPoints} series={deepDiveTrendSeries} />
+                </div>
+
+                <div className="analytics-deep-table">
+                  <div className="analytics-section-heading">
+                    <h3>{activeDeepDive || "Modality"} details by instance</h3>
+                  </div>
+                  <div className="analytics-table-scroll">
+                    <table className="analytics-table">
+                      <thead>
+                        <tr><th>Instance</th><th>Study</th><th>Views</th><th>Share</th><th>Last sync</th></tr>
+                      </thead>
+                      <tbody>
+                        {deepDiveRows.map((row) => (
+                          <tr key={row.instanceCode}>
+                            <td>{row.instanceCode}</td>
+                            <td>{numberFormat.format(row.records)}</td>
+                            <td>{numberFormat.format(row.credits)}</td>
+                            <td>
+                              <span className="analytics-share">
+                                <i style={{ width: `${deepDiveTotal ? (row.records / deepDiveTotal) * 100 : 0}%` }} />
+                              </span>
+                              <span className="analytics-share-value">
+                                {deepDiveTotal ? `${Math.round((row.records / deepDiveTotal) * 100)}%` : "0%"}
+                              </span>
+                            </td>
+                            <td>
+                              {lastSyncByInstance.has(row.instanceCode)
+                                ? dateLabel(lastSyncByInstance.get(row.instanceCode)!, {
+                                    month: "short",
+                                    day: "numeric",
+                                    year: "numeric",
+                                  })
+                                : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                        {!deepDiveRows.length && (
+                          <tr><td className="analytics-empty-cell" colSpan={5}>No records for this modality.</td></tr>
+                        )}
+                      </tbody>
+                      {deepDiveRows.length > 0 && (
+                        <tfoot>
+                          <tr>
+                            <th>Total</th>
+                            <th>{numberFormat.format(deepDiveRows.reduce((total, row) => total + row.records, 0))}</th>
+                            <th>{numberFormat.format(deepDiveRows.reduce((total, row) => total + row.credits, 0))}</th>
+                            <th><span className="analytics-share"><i style={{ width: "100%" }} /></span><span className="analytics-share-value">100%</span></th>
+                            <th>—</th>
+                          </tr>
+                        </tfoot>
+                      )}
+                    </table>
+                  </div>
+                </div>
+              </div>
             </section>
           </>
         ) : null}
