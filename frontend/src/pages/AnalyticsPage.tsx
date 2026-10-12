@@ -60,118 +60,92 @@ function TrendChart({
   points: TrendPoint[];
   series: TrendSeries[];
 }) {
-  const width = 1000;
-  const height = 280;
-  const left = 58;
-  const right = 100;
-  const top = 20;
-  const bottom = 46;
-  const plotWidth = width - left - right;
-  const plotHeight = height - top - bottom;
-  let maximum = 1;
-  for (const line of series) {
-    for (const value of line.values) {
-      maximum = Math.max(maximum, value);
-    }
-  }
-  const xFor = (index: number) =>
-    left + (points.length <= 1 ? plotWidth / 2 : (index / (points.length - 1)) * plotWidth);
-  const yFor = (value: number) => top + plotHeight - (value / maximum) * plotHeight;
-  const labelIndexes = Array.from(
-    new Set(
-      Array.from({ length: Math.min(7, points.length) }, (_, index) =>
-        Math.round((index / Math.max(1, Math.min(7, points.length) - 1)) * (points.length - 1))
-      )
-    )
-  );
-
   return (
-    <div className="analytics-trend">
+    <div className="analytics-trend-grid">
       {points.length && series.length ? (
-        <svg
-          className="analytics-mini-chart"
-          viewBox={`0 0 ${width} ${height}`}
-          role="img"
-          aria-label="Line chart showing analytics trends"
-        >
-          {[0, 0.25, 0.5, 0.75, 1].map((fraction) => {
-            const y = top + plotHeight * fraction;
-            return (
-              <g key={fraction}>
-                <line x1={left} y1={y} x2={width - right} y2={y} stroke="#e4edf7" />
-                <text x={left - 7} y={y + 3} textAnchor="end" className="analytics-chart-label">
-                  {Math.round(maximum * (1 - fraction))}
-                </text>
-              </g>
-            );
-          })}
-          {series.map((line, seriesIndex) => (
-            <g key={line.key}>
-              <polyline
-                points={line.values.map((value, index) => `${xFor(index)},${yFor(value)}`).join(" ")}
-                fill="none"
-                stroke={line.color}
-                strokeWidth="3"
-                vectorEffect="non-scaling-stroke"
-              />
-              {line.values.map((value, index) => (
-                <circle key={`${line.key}-${points[index].key}`} cx={xFor(index)} cy={yFor(value)} r="4" fill={line.color}>
-                  <title>{`${points[index].label}: ${line.label}, ${numberFormat.format(value)}`}</title>
-                </circle>
-              ))}
-              {points.length <= 8
-                ? line.values.map((value, index) => (
-                    <text
-                      key={`${line.key}-${points[index].key}-value`}
-                      x={xFor(index)}
-                      y={Math.max(top + 14, yFor(value) - 10 - (seriesIndex % 2) * 14)}
-                      textAnchor="middle"
+        series.map((line) => {
+          const width = 360;
+          const height = 180;
+          const left = 48;
+          const right = 10;
+          const top = 16;
+          const bottom = 32;
+          const plotWidth = width - left - right;
+          const plotHeight = height - top - bottom;
+          const maximum = Math.max(1, ...line.values);
+          const xFor = (index: number) =>
+            left + (points.length <= 1 ? plotWidth / 2 : (index / (points.length - 1)) * plotWidth);
+          const yFor = (value: number) => top + plotHeight - (value / maximum) * plotHeight;
+          const labelIndexes = Array.from(
+            new Set(
+              Array.from({ length: Math.min(4, points.length) }, (_, index) =>
+                Math.round((index / Math.max(1, Math.min(4, points.length) - 1)) * (points.length - 1))
+              )
+            )
+          );
+          const total = line.values.reduce((sum, value) => sum + value, 0);
+
+          return (
+            <article className="analytics-modality-trend" key={line.key}>
+              <div className="analytics-modality-trend-heading">
+                <span><i style={{ backgroundColor: line.color }} />{line.label}</span>
+                <strong>{numberFormat.format(total)} studies</strong>
+              </div>
+              <svg
+                className="analytics-mini-chart"
+                viewBox={`0 0 ${width} ${height}`}
+                role="img"
+                aria-label={`Line chart showing ${line.label} studies over time`}
+              >
+                {[0, 0.25, 0.5, 0.75, 1].map((fraction) => {
+                  const y = top + plotHeight * fraction;
+                  return (
+                    <g key={fraction}>
+                      <line x1={left} y1={y} x2={width - right} y2={y} stroke="#e4edf7" />
+                      <text x={left - 7} y={y + 3} textAnchor="end" className="analytics-chart-label">
+                        {numberFormat.format(Math.round(maximum * (1 - fraction)))}
+                      </text>
+                    </g>
+                  );
+                })}
+                <polyline
+                  points={line.values.map((value, index) => `${xFor(index)},${yFor(value)}`).join(" ")}
+                  fill="none"
+                  stroke={line.color}
+                  strokeWidth="3"
+                  vectorEffect="non-scaling-stroke"
+                />
+                {line.values.map((value, index) =>
+                  value > 0 ? (
+                    <circle
+                      key={`${line.key}-${points[index].key}`}
+                      cx={xFor(index)}
+                      cy={yFor(value)}
+                      r="3.5"
                       fill={line.color}
-                      className="analytics-point-value"
                     >
-                      {numberFormat.format(value)}
-                    </text>
-                  ))
-                : points.length > 0 && (
-                <text
-                  x={points.length === 1 ? xFor(0) + 8 : xFor(points.length - 1) - 6}
-                  y={
-                    yFor(line.values[line.values.length - 1]) +
-                    4 +
-                    (seriesIndex - (series.length - 1) / 2) * 14
-                  }
-                  textAnchor={points.length === 1 ? "start" : "end"}
-                  fill={line.color}
-                  className="analytics-point-value"
-                >
-                  {`${line.label} ${numberFormat.format(line.values[line.values.length - 1])}`}
-                </text>
-              )}
-            </g>
-          ))}
-          {labelIndexes.map((index) => (
-            <text
-              key={points[index].key}
-              x={xFor(index)}
-              y={height - 4}
-              textAnchor={index === 0 ? "start" : index === points.length - 1 ? "end" : "middle"}
-              className="analytics-chart-label"
-            >
-              {points[index].label}
-            </text>
-          ))}
-        </svg>
+                      <title>{`${points[index].label}: ${line.label}, ${numberFormat.format(value)} studies`}</title>
+                    </circle>
+                  ) : null
+                )}
+                {labelIndexes.map((index) => (
+                  <text
+                    key={points[index].key}
+                    x={xFor(index)}
+                    y={height - 5}
+                    textAnchor={index === 0 ? "start" : index === points.length - 1 ? "end" : "middle"}
+                    className="analytics-chart-label"
+                  >
+                    {points[index].label}
+                  </text>
+                ))}
+              </svg>
+            </article>
+          );
+        })
       ) : (
         <p className="analytics-empty">No trend data for this date range.</p>
       )}
-      <div className="analytics-chart-legend" aria-hidden="true">
-        {series.map((line) => (
-          <span key={line.key}>
-            <i style={{ backgroundColor: line.color }} />
-            {line.label} <b>{numberFormat.format(line.values.reduce((total, value) => total + value, 0))}</b>
-          </span>
-        ))}
-      </div>
     </div>
   );
 }
@@ -1061,7 +1035,7 @@ export function AnalyticsPage() {
                       <strong>{numberFormat.format(row.records)}</strong>
                       <span>{row.records === 1 ? "study" : "studies"}</span>
                       <span className="analytics-description-count-divider">·</span>
-                      <span>{numberFormat.format(row.credits)} {row.credits === 1 ? "view" : "views"}</span>
+                      {/* <span>{numberFormat.format(row.credits)} {row.credits === 1 ? "view" : "views"}</span> */}
                     </div>
                   </article>
                 ))}

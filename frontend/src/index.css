@@ -1960,39 +1960,61 @@ button.analytics-kpi-card {
   font-size: 13px;
 }
 
-.analytics-main-chart .analytics-trend {
+.analytics-main-chart .analytics-trend-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 12px;
   margin-top: 12px;
-  padding: 12px 8px 4px;
+}
+
+.analytics-modality-trend {
+  min-width: 0;
+  padding: 10px 12px 6px;
   border: 1px solid #e2eaf3;
-  border-radius: 5px;
+  border-radius: 7px;
   background: linear-gradient(180deg, #fff 0%, #fbfdff 100%);
 }
 
-.analytics-main-chart .analytics-mini-chart {
-  min-height: 220px;
+.analytics-modality-trend-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #183454;
+  font-size: 13px;
+}
+
+.analytics-modality-trend-heading span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  font-weight: 700;
+}
+
+.analytics-modality-trend-heading span i {
+  flex: 0 0 9px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.analytics-modality-trend-heading strong {
+  flex: 0 0 auto;
+  color: #607792;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.analytics-main-chart .analytics-modality-trend .analytics-mini-chart {
+  min-height: 0;
+  margin-top: 4px;
 }
 
 .analytics-main-chart .analytics-chart-label {
   fill: #526b86;
-  font-size: 13px;
+  font-size: 10px;
   font-weight: 500;
-}
-
-.analytics-main-chart .analytics-point-value {
-  font-size: 13px;
-  font-weight: 700;
-  paint-order: stroke;
-  stroke: #fff;
-  stroke-linejoin: round;
-  stroke-width: 4px;
-}
-
-.analytics-main-chart .analytics-chart-legend {
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 10px 22px;
-  padding: 8px 4px 2px;
-  font-size: 13px;
 }
 
 @media (max-width: 640px) {
