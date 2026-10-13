@@ -7,6 +7,11 @@ export interface User {
   canManageControl: boolean;
 }
 
+export interface LicensePlan { id: number; name: string; service: "XRAY" | "CT"; testTypeId: number | null; credits: number; validityDays: number; cost: number }
+export interface DesktopLicense { id: number; licenseKey: string; service: "XRAY" | "CT"; platform: string; planId: number; planName: string; status: string; statusCode: string; fullName: string | null; username: string | null; mobile: string | null; vendor: string | null; location: string | null; address: string | null; latitude: number | null; longitude: number | null; creditsTotal:number; creditsRemaining: number; creditAvailableOnline: number; ctCredits: number; systemHash:string|null; macAddress:string|null; lastSync:string|null; activationCount:number; activationAttemptCount:number; successfulValidationCount:number; lastValidationAt:string|null; fraudDetected:boolean; fraudAttemptCount:number; lastFraudAttempt:string|null; lastFraudReason:string|null; rateLimitTriggered:boolean; carriedForwardFrom:number|null; carriedForwardTo:number|null; carryForwardDate:string|null; blockedAt:string|null; blockedReason:string|null; errorLogs:string|null; startsAt: string | null; endsAt: string | null; createdAt: string | null; updatedAt:string|null }
+export interface LicenseAnalytics { total: number; active: number; creditsUsed: number; validationActivity: number; statuses: Record<string, number>; platforms: Record<string, number>; plans: Array<{name:string; count:number}>; organisations: Array<{name:string; count:number}>; recent: Array<{licenseKey:string;service:string;platform:string;status:string;credits:number;vendor:string;createdAt:string|null}> }
+export interface LicenseKeyAnalytics { license: DesktopLicense; planCredits:number; creditsUsed:number; creditsRemaining:number; usagePercent:number; validations:number; activationCount:number; activationAttempts:number; fraudAttempts:number; fraudDetected:boolean; activity:Array<{date:string|null;type:string}> }
+
 export interface ControlOverview {
   apiKeys: Array<{ id: number; keyName: string }>;
   users: Array<{
@@ -29,6 +34,8 @@ export interface TrafficOverview {
   totalRequests: number;
   totalDataBytes: number;
   activeInstances: number;
+  averageResponseTimeMs: number;
+  successRate: number;
   highestTrafficInstance: {
     name: string;
     requests: number;
@@ -63,14 +70,24 @@ export interface HourlyInstanceTraffic {
   averageResponseTimeMs: number;
 }
 
-export interface RecentTrafficRequest {
-  timestamp: string;
-  instance: string;
-  instanceName: string;
-  method: string;
-  route: string;
-  statusCode: number;
-  totalDataBytes: number;
+export interface SourceSyncActivity {
+  totalStudies: number;
+  creditsUsed: number;
+  activeInstances: number;
+  lastSync: string | null;
+  instances: Array<{
+    instance: string;
+    name: string;
+    studies: number;
+    creditsUsed: number;
+    lastSync: string | null;
+  }>;
+  daily: Array<{
+    date: string;
+    instance: string;
+    studies: number;
+    creditsUsed: number;
+  }>;
 }
 
 export interface TrafficAnalyticsData {
@@ -80,8 +97,8 @@ export interface TrafficAnalyticsData {
   daily: DailyTraffic[];
   dailyByInstance: DailyInstanceTraffic[];
   hourlyByInstance: HourlyInstanceTraffic[];
-  recentRequests: RecentTrafficRequest[];
   instances: InstanceTraffic[];
+  sourceActivity: SourceSyncActivity;
 }
 
 /*
@@ -102,7 +119,7 @@ const API_BASE_URL = (
 ).replace(/\/$/, "");
 
 interface ApiRequestOptions {
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "PUT" | "DELETE";
   data?: unknown;
   params?: Record<string, string | undefined>;
   cache?: RequestCache;
@@ -212,6 +229,12 @@ const httpClient = {
       data: result,
     }));
   },
+  put<T>(endpoint: string, data: unknown): Promise<{data:T}> {
+    return apiRequest<T>(endpoint, {method:"PUT", data}).then(data => ({data}));
+  },
+  delete<T>(endpoint: string): Promise<{data:T}> {
+    return apiRequest<T>(endpoint, {method:"DELETE"}).then(data => ({data}));
+  },
 };
 
 let currentUserRequest: Promise<User> | null = null;
@@ -219,6 +242,39 @@ let dashboardRequest: Promise<DashboardResponse> | null = null;
 let analyticsRequest: Promise<AnalyticsResponse> | null = null;
 
 export const api = {
+  async getLicensePlans(service?: string): Promise<LicensePlan[]> {
+    return httpClient.get<{items: LicensePlan[] }>("/api/v1/desktop/plans", { params: { service } }).then(r => r.data.items);
+  },
+  async createLicensePlan(data: {name:string; service:string; credits:number; validityDays:number; cost:number}): Promise<LicensePlan> {
+    return httpClient.post<LicensePlan>("/api/v1/desktop/plans", data).then(r => r.data);
+  },
+  async updateLicensePlan(id:number, data: {name:string; service:string; credits:number; validityDays:number; cost:number}): Promise<LicensePlan> {
+    return httpClient.put<LicensePlan>(`/api/v1/desktop/plans/${id}`, data).then(r => r.data);
+  },
+  async deleteLicensePlan(id:number): Promise<void> {
+    await httpClient.delete(`/api/v1/desktop/plans/${id}`);
+  },
+  async getDesktopLicenses(service:string, search?:string): Promise<DesktopLicense[]> {
+    return httpClient.get<{items: DesktopLicense[] }>("/api/v1/desktop/licenses", { params: { service, search } }).then(r => r.data.items);
+  },
+  async createDesktopLicense(data: Record<string, unknown>): Promise<DesktopLicense> {
+    return httpClient.post<DesktopLicense>("/api/v1/desktop/licenses", data).then(r => r.data);
+  },
+  async updateDesktopLicense(id:number, data: Record<string, unknown>): Promise<DesktopLicense> {
+    return httpClient.put<DesktopLicense>(`/api/v1/desktop/licenses/${id}`, data).then(r => r.data);
+  },
+  async deleteDesktopLicense(id:number): Promise<void> {
+    await httpClient.delete(`/api/v1/desktop/licenses/${id}`);
+  },
+  async bulkCreateDesktopLicenses(data: Record<string, unknown>): Promise<{created:number}> {
+    return httpClient.post<{created:number}>("/api/v1/desktop/licenses/bulk", data).then(r => r.data);
+  },
+  async getLicenseAnalytics(service:string): Promise<LicenseAnalytics> {
+    return httpClient.get<LicenseAnalytics>("/api/v1/desktop/analytics", { params: { service } }).then(r => r.data);
+  },
+  async getLicenseKeyAnalytics(id:number): Promise<LicenseKeyAnalytics> {
+    return httpClient.get<LicenseKeyAnalytics>(`/api/v1/desktop/licenses/${id}/analytics`).then(r => r.data);
+  },
   // --------------------------------------------------
   // GET CURRENT USER
   // --------------------------------------------------

@@ -1,14 +1,17 @@
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import validates
 from sqlalchemy.sql import func
@@ -83,9 +86,12 @@ class SyncRecord(Base):
     __tablename__ = "sync_records"
     __table_args__ = (
         Index("ix_sync_records_synced_at_id", "synced_at", "id"),
+        Index("uq_sync_records_instance_source_id", "instance_code", "source_record_id", unique=True),
     )
 
     id = Column(Integer, primary_key=True, index=True)
+
+    source_record_id = Column(String(120), nullable=True)
 
     instance_code = Column(
         String(50),
@@ -161,3 +167,75 @@ class SyncLog(Base):
         DateTime(timezone=True),
         server_default=func.now()
     )
+
+
+class LicensePlan(Base):
+    __tablename__ = "license_plans"
+    __table_args__ = (
+        Index("ix_ai_license_plans_test_type", "test_type_id"),
+        CheckConstraint("credits >= 0", name="ck_ai_license_plans_credits_nonnegative"),
+        CheckConstraint("validity_days >= 0", name="ck_ai_license_plans_validity_nonnegative"),
+        CheckConstraint("plan_cost >= 0", name="ck_ai_license_plans_cost_nonnegative"),
+        {"schema": "ai"},
+    )
+
+    plan_id = Column(BigInteger, primary_key=True, autoincrement=True)
+    test_type_id = Column(Integer, nullable=True)
+    plan_name = Column(String, nullable=False)
+    credits = Column(Integer, nullable=False, default=0, server_default="0")
+    validity_days = Column(Integer, nullable=False, default=0, server_default="0")
+    plan_cost = Column(Numeric, nullable=False, default=0, server_default="0")
+
+
+class DesktopLicense(Base):
+    __tablename__ = "license_detail"
+    __table_args__ = (
+        Index("ix_ai_license_detail_scope_status", "license_app_scope", "status"),
+        Index("ix_ai_license_detail_plan", "plan_id"),
+        Index("ix_ai_license_detail_key", "license_key"),
+        UniqueConstraint("license_key", "app_version_type", name="uq_ai_license_detail_key_platform"),
+        CheckConstraint("status IN ('A', 'U', 'CF', 'B')", name="ck_ai_license_detail_status"),
+        CheckConstraint("app_version_type IN ('DCP', 'DXP', 'CXR')", name="ck_ai_license_detail_platform"),
+        CheckConstraint("credit_left >= 0 AND credit_available_online >= 0 AND ct_credits >= 0", name="ck_ai_license_detail_credits"),
+        CheckConstraint("activation_count >= 0 AND activation_attempt_count >= 0 AND successful_validation_count >= 0", name="ck_ai_license_detail_activations"),
+        CheckConstraint("fraud_attempt_count >= 0", name="ck_ai_license_detail_fraud_attempts"),
+        {"schema": "ai"},
+    )
+
+    license_id = Column(BigInteger, primary_key=True, autoincrement=True)
+    license_key = Column(String, nullable=False)
+    plan_id = Column(BigInteger, ForeignKey("ai.license_plans.plan_id", ondelete="RESTRICT"), nullable=False)
+    status = Column(String, nullable=False, default="A", server_default="A")
+    app_version_type = Column(String, nullable=False)
+    license_app_scope = Column(String, nullable=True)
+    credit_left = Column(Integer, nullable=False, default=0, server_default="0")
+    credit_available_online = Column(Integer, nullable=False, default=0, server_default="0")
+    ct_credits = Column(Integer, nullable=False, default=0, server_default="0")
+    start_date = Column(DateTime, nullable=True)
+    end_date = Column(DateTime, nullable=True)
+    system_hash = Column(String, nullable=True)
+    mac_address = Column(String, nullable=True)
+    last_sync = Column(DateTime, nullable=True)
+    activation_count = Column(Integer, nullable=False, default=0, server_default="0")
+    activation_attempt_count = Column(Integer, nullable=False, default=0, server_default="0")
+    successful_validation_count = Column(Integer, nullable=False, default=0, server_default="0")
+    last_validation_at = Column(DateTime, nullable=True)
+    fraud_detected = Column(Boolean, nullable=False, default=False, server_default="false")
+    fraud_attempt_count = Column(Integer, nullable=False, default=0, server_default="0")
+    last_fraud_attempt = Column(DateTime, nullable=True)
+    last_fraud_reason = Column(Text, nullable=True)
+    rate_limit_triggered = Column(Boolean, nullable=False, default=False, server_default="false")
+    fullname = Column(String, nullable=True)
+    username = Column(String, nullable=True)
+    mobile = Column(String, nullable=True)
+    address = Column(Text, nullable=True)
+    vendor_name = Column(String, nullable=True)
+    geo_location = Column(String, nullable=True)
+    carried_forward_from = Column(BigInteger, ForeignKey("ai.license_detail.license_id"), nullable=True)
+    carried_forward_to = Column(BigInteger, ForeignKey("ai.license_detail.license_id"), nullable=True)
+    carry_forward_date = Column(DateTime, nullable=True)
+    blocked_at = Column(DateTime, nullable=True)
+    blocked_reason = Column(Text, nullable=True)
+    error_logs = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)

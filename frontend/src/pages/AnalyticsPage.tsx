@@ -39,8 +39,10 @@ function dateLabel(value: string, options?: Intl.DateTimeFormatOptions): string 
 }
 
 function initialDateRange(): { start: string; end: string } {
-  const today = dateKey(new Date());
-  return { start: today, end: today };
+  const end = new Date();
+  const start = new Date(end);
+  start.setUTCDate(start.getUTCDate() - 29);
+  return { start: dateKey(start), end: dateKey(end) };
 }
 
 function startOfPeriod(date: Date, granularity: Granularity): Date {
@@ -253,7 +255,7 @@ export function AnalyticsPage() {
   const [selectedInstance, setSelectedInstance] = useState("ALL");
   const [selectedDescriptionInstances, setSelectedDescriptionInstances] = useState<string[] | null>(null);
   const [deepDiveModality, setDeepDiveModality] = useState("");
-  const [rangeOption, setRangeOption] = useState<RangeOption>("today");
+  const [rangeOption, setRangeOption] = useState<RangeOption>("30d");
   const [granularity, setGranularity] = useState<Granularity>("daily");
   const [startDate, setStartDate] = useState(initialRange.start);
   const [endDate, setEndDate] = useState(initialRange.end);

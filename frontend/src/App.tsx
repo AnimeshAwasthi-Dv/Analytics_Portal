@@ -41,6 +41,10 @@ const TrafficAnalyticsPage = lazy(async () => ({
 const ControlPage = lazy(async () => ({
   default: (await import("./pages/ControlPage")).ControlPage,
 }));
+const DesktopLicensesPage = lazy(async () => ({ default: (await import("./pages/DesktopLicensesPage")).DesktopLicensesPage }));
+const LicensePlansPage = lazy(async () => ({ default: (await import("./pages/LicensePlansPage")).LicensePlansPage }));
+const LicenseAnalyticsPage = lazy(async () => ({ default: (await import("./pages/LicenseAnalyticsPage")).LicenseAnalyticsPage }));
+const LicenseKeyAnalyticsPage = lazy(async () => ({ default: (await import("./pages/LicenseKeyAnalyticsPage")).LicenseKeyAnalyticsPage }));
 
 function PortalSidebar({
   onLogout,
@@ -50,6 +54,7 @@ function PortalSidebar({
   canManageControl: boolean;
 }) {
   const location = useLocation();
+  const [desktopOpen, setDesktopOpen] = useState(location.pathname.startsWith("/desktop/"));
 
   return (
     <aside className="portal-sidebar">
@@ -74,11 +79,39 @@ function PortalSidebar({
         >
           <span>Dashboard</span>
         </NavLink>
+        <section className="portal-nav-group">
+          <button
+            type="button"
+            className={`portal-nav-link portal-nav-group-toggle${location.pathname.startsWith("/desktop/") ? " active" : ""}`}
+            aria-expanded={desktopOpen}
+            aria-controls="desktop-exe-subnav"
+            onClick={() => setDesktopOpen((open) => !open)}
+          >
+            <span>Desktop EXE</span>
+            <i className={`portal-nav-chevron${desktopOpen ? " expanded" : ""}`} aria-hidden="true" />
+          </button>
+          {desktopOpen && (
+            <div className="portal-subnavigation" id="desktop-exe-subnav">
+              <NavLink to="/desktop/licenses" className={({ isActive }) => `portal-nav-link portal-subnav-link${isActive ? " active" : ""}`}>
+                <span>Licenses</span>
+              </NavLink>
+              <NavLink to="/desktop/plans" className={({ isActive }) => `portal-nav-link portal-subnav-link${isActive ? " active" : ""}`}>
+                <span>Plans</span>
+              </NavLink>
+              <NavLink to="/desktop/analytics" className={({ isActive }) => `portal-nav-link portal-subnav-link${isActive ? " active" : ""}`}>
+                <span>License Insights</span>
+              </NavLink>
+              <NavLink to="/desktop/key-analytics" className={({ isActive }) => `portal-nav-link portal-subnav-link${isActive ? " active" : ""}`}>
+                <span>Key Analytics</span>
+              </NavLink>
+            </div>
+          )}
+        </section>
         <NavLink
           to="/analytics"
           className={({ isActive }) => `portal-nav-link${isActive ? " active" : ""}`}
         >
-          <span>Analytics</span>
+          <span>Study Analytics</span>
         </NavLink>
         <NavLink
           to="/traffic-analytics"
@@ -236,6 +269,22 @@ function App() {
           }
         />
 
+        <Route
+          path="/desktop/licenses"
+          element={user ? <PortalShell onLogout={handleLogout} canManageControl={user.canManageControl}><DesktopLicensesPage /></PortalShell> : <Navigate to="/login" replace />}
+        />
+        <Route
+          path="/desktop/plans"
+          element={user ? <PortalShell onLogout={handleLogout} canManageControl={user.canManageControl}><LicensePlansPage /></PortalShell> : <Navigate to="/login" replace />}
+        />
+        <Route
+          path="/desktop/analytics"
+          element={user ? <PortalShell onLogout={handleLogout} canManageControl={user.canManageControl}><LicenseAnalyticsPage /></PortalShell> : <Navigate to="/login" replace />}
+        />
+        <Route
+          path="/desktop/key-analytics"
+          element={user ? <PortalShell onLogout={handleLogout} canManageControl={user.canManageControl}><LicenseKeyAnalyticsPage /></PortalShell> : <Navigate to="/login" replace />}
+        />
         <Route
           path="/analytics"
           element={

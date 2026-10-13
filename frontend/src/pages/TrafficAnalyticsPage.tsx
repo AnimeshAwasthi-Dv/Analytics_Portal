@@ -15,6 +15,8 @@ type TrendPoint = {
   label: string;
   requests: number;
   totalDataBytes: number;
+  studies: number;
+  creditsUsed: number;
 };
 
 const numberFormat = new Intl.NumberFormat();
@@ -56,7 +58,7 @@ function makeTrend(
     const date = new Date(`${row.date}T00:00:00Z`);
     if (Number.isNaN(date.getTime())) return;
     const key = startOfPeriod(date, granularity).toISOString().slice(0, 10);
-    const value = totals.get(key) ?? { requests: 0, totalDataBytes: 0 };
+    const value = totals.get(key) ?? { requests: 0, totalDataBytes: 0, studies: 0, creditsUsed: 0 };
     value.requests += row.requests;
     value.totalDataBytes += row.totalDataBytes;
     totals.set(key, value);
@@ -83,7 +85,49 @@ function makeTrend(
     points.push({
       key,
       label,
-      ...(totals.get(key) ?? { requests: 0, totalDataBytes: 0 }),
+      ...(totals.get(key) ?? { requests: 0, totalDataBytes: 0, studies: 0, creditsUsed: 0 }),
+    });
+    if (granularity === "daily") cursor.setUTCDate(cursor.getUTCDate() + 1);
+    else if (granularity === "weekly") cursor.setUTCDate(cursor.getUTCDate() + 7);
+    else cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  return points;
+}
+
+function makeSourceTrend(
+  rows: NonNullable<TrafficAnalyticsData["sourceActivity"]>["daily"],
+  instance: string,
+  granularity: Granularity,
+  firstDate: string,
+  lastDate: string
+): TrendPoint[] {
+  if (!firstDate || !lastDate) return [];
+  const totals = new Map<string, { studies: number; creditsUsed: number }>();
+  for (const row of rows) {
+    if (instance !== "ALL" && row.instance !== instance) continue;
+    const date = new Date(`${row.date}T00:00:00Z`);
+    if (Number.isNaN(date.getTime())) continue;
+    const key = startOfPeriod(date, granularity).toISOString().slice(0, 10);
+    const total = totals.get(key) ?? { studies: 0, creditsUsed: 0 };
+    total.studies += row.studies;
+    total.creditsUsed += row.creditsUsed;
+    totals.set(key, total);
+  }
+
+  const cursor = startOfPeriod(new Date(`${firstDate}T00:00:00Z`), granularity);
+  const end = startOfPeriod(new Date(`${lastDate}T00:00:00Z`), granularity);
+  const points: TrendPoint[] = [];
+  while (cursor <= end) {
+    const key = cursor.toISOString().slice(0, 10);
+    const label = granularity === "monthly"
+      ? cursor.toLocaleDateString(undefined, { month: "short", year: "2-digit", timeZone: "UTC" })
+      : cursor.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+    points.push({
+      key,
+      label,
+      requests: 0,
+      totalDataBytes: 0,
+      ...(totals.get(key) ?? { studies: 0, creditsUsed: 0 }),
     });
     if (granularity === "daily") cursor.setUTCDate(cursor.getUTCDate() + 1);
     else if (granularity === "weekly") cursor.setUTCDate(cursor.getUTCDate() + 7);
@@ -105,6 +149,8 @@ function makeHourlyTrend(rows: HourlyInstanceTraffic[], instance: string): Trend
     key: String(hour).padStart(2, "0"),
     label: `${String(hour).padStart(2, "0")}:00`,
     ...(totals.get(hour) ?? { requests: 0, totalDataBytes: 0 }),
+    studies: 0,
+    creditsUsed: 0,
   }));
 }
 
@@ -118,7 +164,7 @@ const TrafficMetricChart = memo(function TrafficMetricChart({
   title: string;
   description?: string;
   points: TrendPoint[];
-  metric: "requests" | "totalDataBytes";
+  metric: "requests" | "totalDataBytes" | "studies" | "creditsUsed";
   chartType?: "bar" | "line";
 }) {
   const width = 900;
@@ -136,10 +182,9 @@ const TrafficMetricChart = memo(function TrafficMetricChart({
   const barWidth = Math.max(3, Math.min(24, slotWidth * 0.62));
   const labelStep = Math.max(1, Math.ceil(points.length / 8));
   const hasData = values.some((value) => value > 0);
-  const formatValue =
-    metric === "requests"
-      ? (value: number) => numberFormat.format(value)
-      : formatBytes;
+  const formatValue = metric === "totalDataBytes"
+    ? formatBytes
+    : (value: number) => numberFormat.format(value);
 
   return (
     <article className="traffic-chart-card">
@@ -233,7 +278,7 @@ const TrafficMetricChart = memo(function TrafficMetricChart({
                   width={barWidth}
                   height={value ? Math.max(2, barHeight) : 1}
                   rx="2"
-                  className={metric === "requests" ? "traffic-request-bar" : "traffic-bytes-bar"}
+                  className={metric === "requests" || metric === "studies" ? "traffic-request-bar" : "traffic-bytes-bar"}
                 >
                   <title>{`${point.label}: ${formatValue(value)}`}</title>
                 </rect>
@@ -262,7 +307,7 @@ const TrafficMetricChart = memo(function TrafficMetricChart({
           })}
         </svg>
       ) : (
-        <p className="traffic-empty">No {metric === "requests" ? "requests" : "data transfer"} in this date range.</p>
+        <p className="traffic-empty">No {metric === "requests" ? "requests" : metric === "studies" ? "studies" : metric === "creditsUsed" ? "credits used" : "data transfer"} in this date range.</p>
       )}
     </article>
   );
@@ -305,7 +350,8 @@ export function TrafficAnalyticsPage() {
         if (!cancelled) {
           setAnalytics(result);
           setSelectedInstance((current) =>
-            current !== "ALL" && !result.instances.some((row) => row.instance === current)
+            current !== "ALL" &&
+            !result.sourceActivity.instances.some((row) => row.instance === current)
               ? "ALL"
               : current
           );
@@ -323,37 +369,42 @@ export function TrafficAnalyticsPage() {
   }, [period, startDate, endDate, refreshCount, datesReady, customRange]);
 
   const overview = analytics?.overview;
-  const instances = analytics?.instances ?? [];
-  const selected = instances.find((row) => row.instance === selectedInstance);
+  const sourceActivity = analytics?.sourceActivity;
+  const sourceInstances = sourceActivity?.instances ?? [];
+  const maxSourceStudies = Math.max(1, ...sourceInstances.map((row) => row.studies));
+  const allInstances = sourceInstances.map((row) => ({ instance: row.instance, name: row.name }));
   const dailyTrend = useMemo(
     () =>
       analytics
         ? makeTrend(
             analytics.daily,
             analytics.dailyByInstance,
-            selectedInstance,
+            "ALL",
             granularity,
             analytics.startDate,
             analytics.endDate
           )
         : [],
+    [analytics, granularity]
+  );
+  const sourceTrend = useMemo(
+    () => analytics
+      ? makeSourceTrend(
+          analytics.sourceActivity.daily,
+          selectedInstance,
+          granularity,
+          analytics.startDate,
+          analytics.endDate
+        )
+      : [],
     [analytics, granularity, selectedInstance]
   );
   const hourlyTrend = useMemo(
-    () => makeHourlyTrend(analytics?.hourlyByInstance ?? [], selectedInstance),
-    [analytics, selectedInstance]
+    () => makeHourlyTrend(analytics?.hourlyByInstance ?? [], "ALL"),
+    [analytics]
   );
-  const maxBytes = Math.max(1, ...instances.map((row) => row.totalDataBytes));
-  const displayName = selected?.name ?? "All instances";
-  const displayRequests = selected?.requests ?? overview?.totalRequests ?? 0;
-  const displayBytes = selected?.totalDataBytes ?? overview?.totalDataBytes ?? 0;
-  const displayResponse = selected
-    ? `${selected.averageResponseTimeMs.toLocaleString()} ms`
-    : "Overall";
-  const recentRequests = (analytics?.recentRequests ?? []).filter(
-    (request) =>
-      selectedInstance === "ALL" || request.instance === selectedInstance
-  );
+  const displayRequests = overview?.totalRequests ?? 0;
+  const displayBytes = overview?.totalDataBytes ?? 0;
 
   return (
     <main className="traffic-page">
@@ -362,7 +413,7 @@ export function TrafficAnalyticsPage() {
           <div>
             <Link to="/dashboard" className="traffic-back-link">Back to dashboard</Link>
             <h1>Traffic analytics</h1>
-            <p>Request volume and data transferred by instance and time.</p>
+            <p>Study activity from connected source databases, with portal HTTP metrics available below.</p>
           </div>
           <div className="traffic-controls">
             <label>
@@ -390,10 +441,10 @@ export function TrafficAnalyticsPage() {
               </select>
             </label>
             <label>
-              Instance
+              Source instance
               <select value={selectedInstance} onChange={(event) => setSelectedInstance(event.target.value)}>
                 <option value="ALL">All instances</option>
-                {instances.map((row) => (
+                {allInstances.map((row) => (
                   <option key={row.instance} value={row.instance}>{row.name}</option>
                 ))}
               </select>
@@ -410,26 +461,78 @@ export function TrafficAnalyticsPage() {
         )}
         {error && <p className="traffic-message is-error" role="alert">{error}</p>}
 
+        <section className="traffic-panel">
+          <div className="traffic-section-heading">
+            <div>
+              <h2>Source database activity</h2>
+              <p>Studies imported directly from the connected source databases.</p>
+            </div>
+          </div>
+          <div className="traffic-summary">
+            <article><span>Studies received</span><strong>{loading ? "..." : numberFormat.format(sourceActivity?.totalStudies ?? 0)}</strong><small>Successful records saved in this period</small></article>
+            <article><span>Credits used</span><strong>{loading ? "..." : numberFormat.format(sourceActivity?.creditsUsed ?? 0)}</strong><small>Summed from imported study records</small></article>
+            <article><span>Identified instances</span><strong>{loading ? "..." : numberFormat.format(sourceActivity?.activeInstances ?? 0)}</strong><small>Source database identifiers</small></article>
+            <article><span>Latest sync</span><strong>{loading ? "..." : sourceActivity?.lastSync ? new Date(sourceActivity.lastSync).toLocaleString() : "—"}</strong><small>Most recent imported study</small></article>
+          </div>
+          <section className="traffic-chart-grid traffic-source-chart-grid" aria-label="Imported study and credit trends">
+            <TrafficMetricChart
+              title={`Studies received by ${granularity} · ${allInstances.find((row) => row.instance === selectedInstance)?.name ?? "all instances"}`}
+              description="Number of successfully imported studies in each time period."
+              points={sourceTrend}
+              metric="studies"
+            />
+            <TrafficMetricChart
+              title={`Credits used by ${granularity} · ${allInstances.find((row) => row.instance === selectedInstance)?.name ?? "all instances"}`}
+              description="Credits attributed to imported studies in each time period."
+              points={sourceTrend}
+              metric="creditsUsed"
+              chartType="line"
+            />
+          </section>
+          <div className="traffic-source-instance-list">
+            <h3>Load by instance</h3>
+            {sourceInstances.length ? sourceInstances.map((row) => (
+              <div className="traffic-source-instance-row" key={row.instance}>
+                <strong title={row.name}>{row.name}</strong>
+                <span>{row.instance}</span>
+                <span className="traffic-source-study-load">
+                  <b>{numberFormat.format(row.studies)} studies</b>
+                  <i><em style={{ width: `${(row.studies / maxSourceStudies) * 100}%` }} /></i>
+                </span>
+                <span>{numberFormat.format(row.creditsUsed)} credits</span>
+                <span>{row.lastSync ? new Date(row.lastSync).toLocaleString() : "Never"}</span>
+              </div>
+            )) : <p className="traffic-empty">No synchronized studies were saved in this date range.</p>}
+          </div>
+        </section>
+
+        <section className="traffic-http-section">
+        <div className="traffic-section-heading">
+          <div>
+            <h2>Portal HTTP traffic</h2>
+            <p>Portal API requests over time and the data transferred.</p>
+          </div>
+        </div>
         <section className="traffic-summary" aria-label="Traffic summary">
-          <article><span>Requests</span><strong>{loading ? "…" : numberFormat.format(displayRequests)}</strong><small>{selected ? displayName : "All instances in range"}</small></article>
-          <article><span>Data transferred</span><strong>{loading ? "…" : formatBytes(displayBytes)}</strong><small>Request + response bytes</small></article>
-          <article><span>Active instances</span><strong>{loading ? "…" : numberFormat.format(overview?.activeInstances ?? 0)}</strong><small>With recorded traffic</small></article>
-          <article><span>Average response</span><strong>{loading ? "…" : displayResponse}</strong><small>{selected ? "Selected instance" : "Select an instance for its average"}</small></article>
+          <article><span>Requests</span><strong>{loading ? "..." : numberFormat.format(displayRequests)}</strong><small>All portal API traffic in range</small></article>
+          <article><span>Data transferred</span><strong>{loading ? "..." : formatBytes(displayBytes)}</strong><small>Request + response bytes</small></article>
+          <article><span>API-key instances</span><strong>{loading ? "..." : numberFormat.format(overview?.activeInstances ?? 0)}</strong><small>Portal API-key instances</small></article>
+          <article><span>Average response</span><strong>{loading ? "�" : `${overview?.averageResponseTimeMs ?? 0} ms`}</strong><small>{overview?.successRate ?? 0}% successful requests</small></article>
         </section>
 
         {loading && !analytics ? (
-          <p className="traffic-panel" role="status">Loading traffic data…</p>
+          <p className="traffic-panel" role="status">Loading traffic data...</p>
         ) : analytics && !error ? (
           <>
             <section className="traffic-chart-grid" aria-label="Traffic over time">
               <TrafficMetricChart
-                title={`${granularity[0].toUpperCase()}${granularity.slice(1)} request frequency · ${displayName}`}
-                description="Number of requests received in each time period."
+                title={`Portal request timeline by ${granularity}`}
+                description="Requests received by the portal over the selected date range."
                 points={dailyTrend}
                 metric="requests"
               />
               <TrafficMetricChart
-                title={`${granularity[0].toUpperCase()}${granularity.slice(1)} data volume · ${displayName}`}
+                title={`Portal data volume by ${granularity}`}
                 description="Request and response data transferred in each time period."
                 points={dailyTrend}
                 metric="totalDataBytes"
@@ -438,98 +541,24 @@ export function TrafficAnalyticsPage() {
             </section>
             <section className="traffic-chart-grid traffic-hourly-grid" aria-label="Traffic frequency by time of day">
               <TrafficMetricChart
-                title={`Request frequency by hour · ${displayName}`}
-                description={`Requests grouped by UTC hour of day across ${analytics.startDate} to ${analytics.endDate}.`}
+                title="Portal requests by time of day"
+                description={`Requests grouped by UTC hour across ${analytics.startDate} to ${analytics.endDate}.`}
                 points={hourlyTrend}
                 metric="requests"
               />
               <TrafficMetricChart
-                title={`Data transferred by hour · ${displayName}`}
+                title="Portal data transferred by time of day"
                 description="Request and response bytes grouped by UTC hour of day."
                 points={hourlyTrend}
                 metric="totalDataBytes"
                 chartType="line"
               />
             </section>
-            <section className="traffic-panel">
-              <div className="traffic-section-heading">
-                <div>
-                  <h2>Load by instance</h2>
-                  <p>Select an instance to inspect its time trend above.</p>
-                </div>
-              </div>
-              {instances.length ? (
-                <div className="traffic-instance-list">
-                  {instances.map((row) => (
-                    <button
-                      type="button"
-                      key={row.instance}
-                      className={`traffic-instance-row${selectedInstance === row.instance ? " is-selected" : ""}`}
-                      onClick={() => setSelectedInstance((current) => current === row.instance ? "ALL" : row.instance)}
-                    >
-                      <span className="traffic-instance-name" title={row.name}>{row.name}</span>
-                      <span className="traffic-load-track" aria-label={`${Math.round((row.totalDataBytes / maxBytes) * 100)} percent of largest instance data load`}>
-                        <i style={{ width: `${(row.totalDataBytes / maxBytes) * 100}%` }} />
-                      </span>
-                      <span>{numberFormat.format(row.requests)} requests</span>
-                      <strong>{formatBytes(row.totalDataBytes)}</strong>
-                      <span>{row.averageResponseTimeMs.toLocaleString()} ms avg</span>
-                      <span>{row.successRate.toFixed(1)}% success</span>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <p className="traffic-empty">No instance traffic in this date range.</p>
-              )}
-            </section>
-            <section className="traffic-panel">
-              <div className="traffic-section-heading">
-                <div>
-                  <h2>Recent request times</h2>
-                  <p>Latest recorded requests in this date range, shown in your local time.</p>
-                </div>
-              </div>
-              {recentRequests.length ? (
-                <div className="traffic-request-table-wrap">
-                  <table className="traffic-request-table">
-                    <thead>
-                      <tr>
-                        <th>Time</th>
-                        <th>Instance</th>
-                        <th>Request</th>
-                        <th>Status</th>
-                        <th>Data</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {recentRequests.map((request, index) => (
-                          <tr key={`${request.timestamp}-${request.route}-${index}`}>
-                            <td className="traffic-request-time">
-                              {new Date(request.timestamp).toLocaleString()}
-                            </td>
-                            <td>{request.instanceName}</td>
-                            <td className="traffic-request-route">
-                              <span>{request.method}</span> {request.route}
-                            </td>
-                            <td>
-                              <span className={`traffic-status${request.statusCode >= 400 ? " is-error" : ""}`}>
-                                {request.statusCode}
-                              </span>
-                            </td>
-                            <td>{formatBytes(request.totalDataBytes)}</td>
-                          </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p className="traffic-empty">No identified requests in this date range.</p>
-              )}
-            </section>
           </>
         ) : !error ? (
           <p className="traffic-panel">Select a valid date range to view traffic.</p>
         ) : null}
+        </section>
       </div>
     </main>
   );
