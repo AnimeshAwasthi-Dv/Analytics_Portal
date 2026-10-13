@@ -251,6 +251,7 @@ export function AnalyticsPage() {
   const [error, setError] = useState("");
   const [selectedModality, setSelectedModality] = useState("ALL");
   const [selectedInstance, setSelectedInstance] = useState("ALL");
+  const [selectedDescriptionInstances, setSelectedDescriptionInstances] = useState<string[] | null>(null);
   const [deepDiveModality, setDeepDiveModality] = useState("");
   const [rangeOption, setRangeOption] = useState<RangeOption>("today");
   const [granularity, setGranularity] = useState<Granularity>("daily");
@@ -345,14 +346,20 @@ export function AnalyticsPage() {
   const descriptionRows = useMemo(() => {
     const grouped = new Map<
       string,
-      { modality: string; description: string | null; records: number; credits: number }
+      {
+        modality: string;
+        description: string | null;
+        records: number;
+        credits: number;
+      }
     >();
     for (const row of analytics?.byDescription ?? []) {
       if (
         dateRangeInvalid ||
         row.date < startDate ||
         row.date > endDate ||
-        (selectedInstance !== "ALL" && row.instanceCode !== selectedInstance) ||
+        (selectedDescriptionInstances !== null &&
+          !selectedDescriptionInstances.includes(row.instanceCode)) ||
         (selectedModality !== "ALL" &&
           row.modality.toLocaleUpperCase() !== selectedModality.toLocaleUpperCase())
       ) {
@@ -376,7 +383,14 @@ export function AnalyticsPage() {
         left.modality.localeCompare(right.modality) ||
         (left.description ?? "").localeCompare(right.description ?? "")
     );
-  }, [analytics, dateRangeInvalid, endDate, selectedInstance, selectedModality, startDate]);
+  }, [
+    analytics,
+    dateRangeInvalid,
+    endDate,
+    selectedDescriptionInstances,
+    selectedModality,
+    startDate,
+  ]);
   const descriptionStudyTotal = descriptionRows.reduce((sum, row) => sum + row.records, 0);
 
   const summary = useMemo(
@@ -1015,6 +1029,40 @@ export function AnalyticsPage() {
                   >
                     {modality}
                   </button>
+                ))}
+              </div>
+              <div className="analytics-description-instance-filters" role="group" aria-label="Filter study descriptions by instance">
+                <label className="analytics-description-instance-option">
+                  <input
+                    type="checkbox"
+                    checked={selectedDescriptionInstances === null}
+                    onChange={() =>
+                      setSelectedDescriptionInstances((current) =>
+                        current === null ? [] : null
+                      )
+                    }
+                  />
+                  <span>All instances</span>
+                </label>
+                {instances.map((instance) => (
+                  <label className="analytics-description-instance-option" key={instance}>
+                    <input
+                      type="checkbox"
+                      checked={selectedDescriptionInstances === null || selectedDescriptionInstances.includes(instance)}
+                      onChange={() => {
+                        setSelectedDescriptionInstances((current) => {
+                          const next = new Set(current ?? instances);
+                          if (next.has(instance)) {
+                            next.delete(instance);
+                          } else {
+                            next.add(instance);
+                          }
+                          return next.size === instances.length ? null : Array.from(next);
+                        });
+                      }}
+                    />
+                    <span>{instance}</span>
+                  </label>
                 ))}
               </div>
               <div className="analytics-description-list" aria-live="polite">

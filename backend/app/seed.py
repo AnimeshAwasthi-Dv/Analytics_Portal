@@ -61,8 +61,8 @@ try:
             "env": "PACS_API_KEY",
         },
         {
-            "name": "Portal Key 3",
-            "env": "PORTAL_API_KEY_3",
+            "name": "API Control",
+            "env": "API_CONTROL_KEY",
         },
         {
             "name": "Portal Key 4",

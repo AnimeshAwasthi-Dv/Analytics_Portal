@@ -1589,6 +1589,30 @@ button {
   color: #1457c5;
 }
 
+.analytics-description-instance-filters {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin: 0 0 12px;
+}
+
+.analytics-description-instance-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #536983;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.analytics-description-instance-option input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: #1765e9;
+}
+
 .analytics-description-list {
   overflow: hidden;
   border: 1px solid #e4edf7;
