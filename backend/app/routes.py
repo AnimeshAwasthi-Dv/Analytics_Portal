@@ -1,10 +1,11 @@
 import logging
+import os
 from datetime import date, datetime, time, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import case, func
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from app.auth_api import verify_api_key
 
@@ -21,10 +22,13 @@ from app.models import (
 from app.schemas import (
     LoginRequest,
     UserResponse,
-    SyncPayload
+    SyncPayload,
+    ControlApiKeyCreate,
+    ControlUserCreate,
 )
 from app.auth import (
     verify_password,
+    hash_password,
     create_access_token,
     get_current_user,
     COOKIE_SECURE,
@@ -62,6 +66,27 @@ def as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def is_control_admin(user: User) -> bool:
+    admin_email = os.getenv(
+        "INITIAL_ADMIN_EMAIL",
+        "admin@central-sync.com",
+    ).strip().casefold()
+    return user.email.strip().casefold() == admin_email
+
+
+def require_control_admin(user: User, admin_password: str) -> None:
+    if not is_control_admin(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the configured administrator can manage Control.",
+        )
+    if not verify_password(admin_password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Administrator password is incorrect.",
+        )
 
 
 
@@ -114,7 +139,8 @@ def login(
         "user": {
             "id": user.id,
             "name": user.name,
-            "email": user.email
+            "email": user.email,
+            "canManageControl": is_control_admin(user),
         }
     })
 
@@ -136,7 +162,6 @@ def logout():
     response = JSONResponse({
         "message": "Logged out successfully"
     })
-
     response.delete_cookie("access_token")
 
     return response
@@ -149,7 +174,131 @@ def logout():
 def get_profile(
     current_user: User = Depends(get_current_user)
 ):
-    return current_user
+    return {
+        "id": current_user.id,
+        "name": current_user.name,
+        "email": current_user.email,
+        "canManageControl": is_control_admin(current_user),
+    }
+
+
+@router.get("/api/v1/control")
+def get_control_overview(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not is_control_admin(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the configured administrator can access Control.",
+        )
+
+    api_keys = (
+        db.query(ApiKey.id, ApiKey.key_name)
+        .order_by(ApiKey.key_name)
+        .all()
+    )
+    users = (
+        db.query(User.id, User.name, User.email, User.is_active)
+        .order_by(User.email)
+        .all()
+    )
+    return {
+        "apiKeys": [
+            {"id": key_id, "keyName": key_name}
+            for key_id, key_name in api_keys
+        ],
+        "users": [
+            {
+                "id": user_id,
+                "name": name,
+                "email": email,
+                "isActive": is_active,
+            }
+            for user_id, name, email, is_active in users
+        ],
+    }
+
+
+@router.post("/api/v1/control/api-keys", status_code=status.HTTP_201_CREATED)
+def create_control_api_key(
+    data: ControlApiKeyCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_control_admin(current_user, data.adminPassword)
+    key_name = data.keyName.strip()
+    api_key = data.apiKey.strip()
+    if not key_name or not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="API key name and value are required.",
+        )
+    if db.query(ApiKey.id).filter(ApiKey.key_name == key_name).first():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An API key with this name already exists.",
+        )
+
+    db.add(ApiKey(key_name=key_name, api_key=api_key))
+    if not db.query(Instance.id).filter(Instance.identifier == key_name).first():
+        db.add(Instance(name=key_name, identifier=key_name))
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An API key with this name already exists.",
+        ) from error
+
+    created_key = db.query(ApiKey.id).filter(ApiKey.key_name == key_name).one()
+    return {"id": created_key.id, "keyName": key_name}
+
+
+@router.post("/api/v1/control/users", status_code=status.HTTP_201_CREATED)
+def create_control_user(
+    data: ControlUserCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_control_admin(current_user, data.adminPassword)
+    email = str(data.email).strip().casefold()
+    if db.query(User.id).filter(func.lower(User.email) == email).first():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A user with this email address already exists.",
+        )
+
+    user = User(
+        name=data.name.strip(),
+        email=email,
+        hashed_password=hash_password(data.password),
+        is_active=True,
+    )
+    if not user.name:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="User name is required.",
+        )
+
+    db.add(user)
+    try:
+        db.commit()
+        db.refresh(user)
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A user with this email address already exists.",
+        ) from error
+
+    return {
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "isActive": user.is_active,
+    }
 
 
 # ============================================================

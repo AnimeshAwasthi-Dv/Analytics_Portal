@@ -38,16 +38,25 @@ const AnalyticsPage = lazy(async () => ({
 const TrafficAnalyticsPage = lazy(async () => ({
   default: (await import("./pages/TrafficAnalyticsPage")).TrafficAnalyticsPage,
 }));
+const ControlPage = lazy(async () => ({
+  default: (await import("./pages/ControlPage")).ControlPage,
+}));
 
-function PortalSidebar({ onLogout }: { onLogout: () => void }) {
+function PortalSidebar({
+  onLogout,
+  canManageControl,
+}: {
+  onLogout: () => void;
+  canManageControl: boolean;
+}) {
   const location = useLocation();
 
   return (
     <aside className="portal-sidebar">
       <div className="portal-brand">
         <span className="portal-brand-copy">
-          <strong>Central Sync</strong>
-          <small>Portal Synchronization</small>
+          <strong>DecXpert</strong>
+          <small>Control Panel</small>
         </span>
       </div>
 
@@ -77,6 +86,14 @@ function PortalSidebar({ onLogout }: { onLogout: () => void }) {
         >
           <span>Traffic</span>
         </NavLink>
+        {canManageControl && (
+          <NavLink
+            to="/control"
+            className={({ isActive }) => `portal-nav-link${isActive ? " active" : ""}`}
+          >
+            <span>Control</span>
+          </NavLink>
+        )}
         <NavLink
           to="/dashboard#sync-data"
           className={() => `portal-nav-link${location.hash === "#sync-data" ? " active" : ""}`}
@@ -97,13 +114,15 @@ function PortalSidebar({ onLogout }: { onLogout: () => void }) {
 function PortalShell({
   children,
   onLogout,
+  canManageControl,
 }: {
   children: React.ReactNode;
   onLogout: () => void;
+  canManageControl: boolean;
 }) {
   return (
     <div className="portal-layout">
-      <PortalSidebar onLogout={onLogout} />
+      <PortalSidebar onLogout={onLogout} canManageControl={canManageControl} />
       <main className="portal-main">{children}</main>
     </div>
   );
@@ -169,7 +188,7 @@ function App() {
     return (
       <div className="min-h-screen bg-[#090e1a] flex items-center justify-center px-4">
         <p className="text-sm text-slate-300">
-          Connecting to Central Sync Portal...
+          Connecting to DecXpert Control Panel...
         </p>
       </div>
     );
@@ -201,7 +220,10 @@ function App() {
           path="/dashboard"
           element={
             user || (loading && location.pathname === "/dashboard") ? (
-              <PortalShell onLogout={handleLogout}>
+              <PortalShell
+                onLogout={handleLogout}
+                canManageControl={user?.canManageControl ?? false}
+              >
                 <DashboardPage
                   user={user ?? undefined}
                   onLogout={handleLogout}
@@ -218,7 +240,7 @@ function App() {
           path="/analytics"
           element={
             user ? (
-              <PortalShell onLogout={handleLogout}>
+              <PortalShell onLogout={handleLogout} canManageControl={user.canManageControl}>
                 <AnalyticsPage />
               </PortalShell>
             ) : (
@@ -231,9 +253,24 @@ function App() {
           path="/traffic-analytics"
           element={
             user ? (
-              <PortalShell onLogout={handleLogout}>
+              <PortalShell onLogout={handleLogout} canManageControl={user.canManageControl}>
                 <TrafficAnalyticsPage />
               </PortalShell>
+            ) : (
+              <Navigate to="/login" replace />
+            )
+          }
+        />
+
+        <Route
+          path="/control"
+          element={
+            user?.canManageControl ? (
+              <PortalShell onLogout={handleLogout} canManageControl={user.canManageControl}>
+                <ControlPage />
+              </PortalShell>
+            ) : user ? (
+              <Navigate to="/dashboard" replace />
             ) : (
               <Navigate to="/login" replace />
             )

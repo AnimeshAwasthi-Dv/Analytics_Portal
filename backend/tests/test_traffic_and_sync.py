@@ -13,8 +13,11 @@ from sqlalchemy.pool import StaticPool
 
 from app.auth_api import verify_api_key
 from app.database import Base
-from app.models import ApiKey, Instance, SyncRecord, TrafficLog
+from app.models import ApiKey, Instance, SyncRecord, TrafficLog, User
 from app.routes import (
+    create_control_api_key,
+    create_control_user,
+    get_control_overview,
     get_analytics,
     get_dashboard,
     get_traffic_instances,
@@ -23,8 +26,9 @@ from app.routes import (
     heartbeat,
     receive_sync,
 )
-from app.schemas import SyncPayload
+from app.schemas import ControlApiKeyCreate, ControlUserCreate, SyncPayload
 from app.security import hash_api_key
+from app.auth import hash_password, verify_password
 from app.traffic_middleware import TrafficMonitoringMiddleware
 
 
@@ -273,6 +277,135 @@ class TrafficAndSyncTests(unittest.TestCase):
         self.assertEqual(description_row["studyDescription"], "CT CHEST WITH CONTRAST")
         self.assertEqual(description_row["records"], 2)
         self.assertEqual(description_row["credits"], 2)
+
+    def test_control_creates_hashed_api_keys_and_standard_users(self):
+        admin = User(
+            name="Admin",
+            email="admin@example.com",
+            hashed_password=hash_password("admin-password-123"),
+            is_active=True,
+        )
+        self.session.add(admin)
+        self.session.commit()
+        self.session.refresh(admin)
+        with patch.dict(
+            "os.environ", {"INITIAL_ADMIN_EMAIL": "admin@example.com"}
+        ):
+            created_key = create_control_api_key(
+                ControlApiKeyCreate(
+                    keyName="Instance Three",
+                    apiKey="instance-three-secret",
+                    adminPassword="admin-password-123",
+                ),
+                self.session,
+                admin,
+            )
+            stored_key = (
+                self.session.query(ApiKey)
+                .filter(ApiKey.key_name == "Instance Three")
+                .one()
+            )
+            self.assertEqual(created_key["keyName"], "Instance Three")
+            self.assertEqual(
+                stored_key.api_key, hash_api_key("instance-three-secret")
+            )
+            stored_instance = (
+                self.session.query(Instance)
+                .filter(Instance.identifier == "Instance Three")
+                .one()
+            )
+            self.assertEqual(stored_instance.name, "Instance Three")
+            authenticated_key = verify_api_key(
+                request=SimpleNamespace(state=SimpleNamespace()),
+                credentials=HTTPAuthorizationCredentials(
+                    scheme="Bearer",
+                    credentials="instance-three-secret",
+                ),
+                db=self.session,
+            )
+            self.assertEqual(authenticated_key.key_name, "Instance Three")
+
+            created_user = create_control_user(
+                ControlUserCreate(
+                    name="New User",
+                    email="New.User@example.com",
+                    password="new-user-password-123",
+                    adminPassword="admin-password-123",
+                ),
+                self.session,
+                admin,
+            )
+            stored_user = (
+                self.session.query(User)
+                .filter(User.email == "new.user@example.com")
+                .one()
+            )
+            self.assertEqual(created_user["email"], "new.user@example.com")
+            self.assertTrue(
+                verify_password("new-user-password-123", stored_user.hashed_password)
+            )
+            self.assertNotEqual(
+                stored_user.hashed_password, "new-user-password-123"
+            )
+
+            overview = get_control_overview(self.session, admin)
+            self.assertIn(
+                {"id": stored_key.id, "keyName": "Instance Three"},
+                overview["apiKeys"],
+            )
+            self.assertNotIn("api_key", str(overview))
+            self.assertNotIn("instance-three-secret", str(overview))
+
+    def test_control_requires_configured_admin_and_admin_password(self):
+        admin = User(
+            name="Admin",
+            email="admin@example.com",
+            hashed_password=hash_password("admin-password-123"),
+            is_active=True,
+        )
+        standard_user = User(
+            name="Standard",
+            email="user@example.com",
+            hashed_password=hash_password("standard-password-123"),
+            is_active=True,
+        )
+        self.session.add_all((admin, standard_user))
+        self.session.commit()
+
+        with patch.dict(
+            "os.environ", {"INITIAL_ADMIN_EMAIL": "admin@example.com"}
+        ):
+            with self.assertRaises(HTTPException) as overview_forbidden:
+                get_control_overview(self.session, standard_user)
+            self.assertEqual(overview_forbidden.exception.status_code, 403)
+
+            with self.assertRaises(HTTPException) as wrong_password:
+                create_control_api_key(
+                    ControlApiKeyCreate(
+                        keyName="Unauthorized",
+                        apiKey="secret-value",
+                        adminPassword="incorrect-password",
+                    ),
+                    self.session,
+                    admin,
+                )
+            self.assertEqual(wrong_password.exception.status_code, 401)
+
+            with self.assertRaises(HTTPException) as non_admin:
+                create_control_user(
+                    ControlUserCreate(
+                        name="Another User",
+                        email="another@example.com",
+                        password="another-user-password",
+                        adminPassword="standard-password-123",
+                    ),
+                    self.session,
+                    standard_user,
+                )
+            self.assertEqual(non_admin.exception.status_code, 403)
+
+        self.assertEqual(self.session.query(ApiKey).count(), 0)
+        self.assertEqual(self.session.query(User).count(), 2)
 
     def test_analytics_trends_group_records_by_received_date(self):
         now = datetime.now(timezone.utc)

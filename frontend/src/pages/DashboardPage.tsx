@@ -38,10 +38,10 @@ function DashboardLoadingState({
           <>
             <header className="dashboard-topbar border-b border-slate-300 bg-white">
               <h1 className="text-lg font-bold text-slate-900">
-                Centralized Synchronization Dashboard
+                DecXpert Control Panel
               </h1>
               <p className="mt-1 text-xs text-slate-600">
-                Live data from the Central Sync Portal database
+                Live data from the DecXpert database
               </p>
               {userEmail && (
                 <p className="mt-1 text-xs text-slate-600">{userEmail}</p>
@@ -317,11 +317,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             <div className="flex items-center gap-3">
               <div>
                 <h1 className="text-lg font-bold text-slate-900">
-                  Centralized Synchronization Dashboard
+                  DecXpert Control Panel
                 </h1>
 
                 <p className="text-xs text-slate-500 mt-1">
-                  Live data from the Central Sync Portal database
+                  Live data from the DecXpert database
                 </p>
 
                 {user?.email && (
@@ -462,7 +462,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               </p>
 
               <p className="text-[11px] text-slate-400 mt-1">
-                Central sync records
+                DecXpert sync records
               </p>
             </div>
           </div>

@@ -34,7 +34,7 @@ if not allowed_origins:
     ]
 
 app = FastAPI(
-    title="Central Sync Portal",
+    title="DecXpert Control Panel",
     description="Centralized Sync and QC Management",
     version="1.0.0"
 )
@@ -54,7 +54,7 @@ app.include_router(router)
 @app.get("/")
 def home():
     return {
-        "message": "Central Sync Portal API is running"
+        "message": "DecXpert Control Panel API is running"
     }
 
 

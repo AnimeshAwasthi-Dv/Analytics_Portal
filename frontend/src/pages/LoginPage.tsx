@@ -56,7 +56,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         <div className="text-center mb-8">
 
           <h1 className="text-2xl font-bold text-white">
-            Central Sync Portal
+            DecXpert Control Panel
           </h1>
 
           <p className="text-sm text-slate-400 mt-2">
@@ -142,7 +142,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         </div>
 
         <p className="text-center text-[11px] text-slate-500 mt-6">
-          Central Sync Portal
+          DecXpert Control Panel
         </p>
 
       </div>

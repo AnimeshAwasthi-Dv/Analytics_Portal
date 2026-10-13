@@ -1,4 +1,4 @@
-# Central Sync Portal — Backend Setup Guide
+# DecXpert Control Panel — Backend Setup Guide
 
 A step-by-step guide to installing PostgreSQL, configuring the database, setting up the Python environment, and running the FastAPI backend on Windows.
 
@@ -231,6 +231,12 @@ INITIAL_ADMIN_PASSWORD=YOUR_ADMIN_PASSWORD
 * These are two separate credentials.
 * `JWT_SECRET` is used for signing authentication tokens. Do not use your admin password for this.
 * Never commit `.env` to Git.
+
+The **Control** tab is available only to the account whose email matches
+`INITIAL_ADMIN_EMAIL`. Adding an API key or user requires confirming that
+account's password. API key values are hashed in the `api_keys` table, and
+new user passwords are hashed in the `users` table before they are saved.
+Newly created users have standard access and cannot open Control.
 
 Generate a random JWT secret using:
 
@@ -469,4 +475,4 @@ http://localhost:5173
 * The current database table creation uses SQLAlchemy `create_all()`. Use migrations for future schema changes.
 * The default local cookie configuration is intended for development, not production deployment.
 
-**Central Sync Portal — Backend Setup Guide**
+**DecXpert Control Panel — Backend Setup Guide**

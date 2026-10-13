@@ -1023,6 +1023,347 @@ button {
   }
 }
 
+.control-page {
+  min-height: 100vh;
+  padding: 36px 28px 52px;
+  background:
+    radial-gradient(ellipse at 88% 0%, rgba(216, 232, 252, 0.58), transparent 34%),
+    #f3f7fc;
+}
+
+.control-content {
+  width: min(1120px, 100%);
+  margin: 0 auto;
+}
+
+.control-header,
+.control-inventory-heading,
+.control-inventory-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.control-header {
+  margin-bottom: 26px;
+}
+
+.control-eyebrow {
+  color: #1765e9;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+}
+
+.control-header h1 {
+  margin-top: 5px;
+  color: #152d4b;
+  font-size: clamp(28px, 3vw, 36px);
+  font-weight: 750;
+  letter-spacing: -0.035em;
+}
+
+.control-header > div > p:last-child {
+  margin-top: 6px;
+  color: #657b94;
+  font-size: 14px;
+}
+
+.control-refresh,
+.control-form button {
+  min-height: 40px;
+  padding: 0 17px;
+  border: 1px solid #1765e9;
+  border-radius: 7px;
+  background: #1765e9;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  transition: background 140ms ease, border-color 140ms ease, opacity 140ms ease;
+}
+
+.control-refresh:hover,
+.control-form button:hover:not(:disabled) {
+  border-color: #1053c7;
+  background: #1053c7;
+}
+
+.control-refresh:disabled,
+.control-form button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.control-form-grid,
+.control-inventory-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.control-card,
+.control-inventory-card {
+  min-width: 0;
+  border: 1px solid #dce7f2;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 8px 24px rgba(25, 53, 85, 0.045);
+}
+
+.control-card {
+  padding: 22px;
+}
+
+.control-card-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.control-card-index {
+  display: grid;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 1px solid #dce9fb;
+  border-radius: 9px;
+  background: #f0f6ff;
+  color: #1765e9;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.control-card-heading h2,
+.control-inventory-heading h2 {
+  color: #193453;
+  font-size: 17px;
+  font-weight: 750;
+}
+
+.control-card-heading p {
+  margin-top: 4px;
+  color: #73869c;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.control-form {
+  display: grid;
+  gap: 14px;
+}
+
+.control-form label {
+  display: grid;
+  gap: 6px;
+  color: #425b75;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.control-form input {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 11px;
+  border: 1px solid #d5e1ed;
+  border-radius: 6px;
+  outline: none;
+  background: #fff;
+  color: #193453;
+  font-size: 13px;
+  font-weight: 400;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.control-form input::placeholder {
+  color: #9aabbd;
+}
+
+.control-form input:focus {
+  border-color: #5b96ef;
+  box-shadow: 0 0 0 3px rgba(23, 101, 233, 0.1);
+}
+
+.control-form button {
+  width: 100%;
+  margin-top: 2px;
+}
+
+.control-form-hint {
+  color: #8091a4;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.control-form-message,
+.control-notice {
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.control-form-message {
+  padding: 9px 11px;
+}
+
+.control-form-message.is-error,
+.control-notice-error {
+  border: 1px solid #f3c5c5;
+  background: #fff5f5;
+  color: #a33434;
+}
+
+.control-form-message.is-success {
+  border: 1px solid #bce5d2;
+  background: #f2fbf6;
+  color: #147548;
+}
+
+.control-notice {
+  display: grid;
+  gap: 3px;
+  margin-bottom: 18px;
+  padding: 12px 15px;
+}
+
+.control-notice strong {
+  font-size: 13px;
+}
+
+.control-inventory {
+  margin-top: 32px;
+}
+
+.control-inventory-heading {
+  margin-bottom: 14px;
+}
+
+.control-inventory-heading h2 {
+  margin-top: 4px;
+}
+
+.control-inventory-heading > span {
+  color: #788da3;
+  font-size: 11px;
+}
+
+.control-inventory-card {
+  overflow: hidden;
+}
+
+.control-inventory-card-heading {
+  min-height: 56px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e8eef5;
+}
+
+.control-inventory-card-heading h3 {
+  color: #284664;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.control-inventory-card-heading > span {
+  display: grid;
+  min-width: 26px;
+  height: 26px;
+  place-items: center;
+  border-radius: 7px;
+  background: #f0f5fb;
+  color: #44627f;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.control-inventory-card ul {
+  padding: 2px 16px;
+}
+
+.control-inventory-card li {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid #edf2f7;
+  color: #344f6c;
+  font-size: 12px;
+}
+
+.control-inventory-card li:last-child {
+  border-bottom: 0;
+}
+
+.control-inventory-card li > small {
+  margin-left: auto;
+  color: #8292a4;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.control-record-mark {
+  flex: 0 0 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3282ee;
+}
+
+.control-record-mark.is-user {
+  background: #25a477;
+}
+
+.control-user-record {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.control-user-record strong {
+  overflow: hidden;
+  color: #344f6c;
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.control-user-record small {
+  overflow: hidden;
+  color: #8292a4;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.control-empty {
+  padding: 18px 16px;
+  color: #8292a4;
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .control-page {
+    padding: 26px 16px 36px;
+  }
+
+  .control-form-grid,
+  .control-inventory-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .control-header {
+    align-items: flex-start;
+  }
+
+  .control-card {
+    padding: 18px;
+  }
+}
+
 @media (min-width: 1100px) {
   .traffic-chart-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

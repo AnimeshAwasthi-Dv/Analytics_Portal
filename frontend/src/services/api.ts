@@ -4,6 +4,17 @@ export interface User {
   id: number;
   name: string;
   email: string;
+  canManageControl: boolean;
+}
+
+export interface ControlOverview {
+  apiKeys: Array<{ id: number; keyName: string }>;
+  users: Array<{
+    id: number;
+    name: string;
+    email: string;
+    isActive: boolean;
+  }>;
 }
 
 export type TrafficPeriod = "today" | "yesterday" | "7d" | "30d" | "custom";
@@ -254,6 +265,36 @@ export const api = {
   // --------------------------------------------------
   async logout(): Promise<void> {
     await httpClient.post("/auth/logout");
+  },
+
+  async getControlOverview(): Promise<ControlOverview> {
+    return httpClient
+      .get<ControlOverview>("/api/v1/control", { cache: "no-store" })
+      .then((response) => response.data);
+  },
+
+  async createControlApiKey(data: {
+    keyName: string;
+    apiKey: string;
+    adminPassword: string;
+  }): Promise<{ id: number; keyName: string }> {
+    return httpClient
+      .post<{ id: number; keyName: string }>("/api/v1/control/api-keys", data)
+      .then((response) => response.data);
+  },
+
+  async createControlUser(data: {
+    name: string;
+    email: string;
+    password: string;
+    adminPassword: string;
+  }): Promise<{ id: number; name: string; email: string; isActive: boolean }> {
+    return httpClient
+      .post<{ id: number; name: string; email: string; isActive: boolean }>(
+        "/api/v1/control/users",
+        data
+      )
+      .then((response) => response.data);
   },
 
   // --------------------------------------------------

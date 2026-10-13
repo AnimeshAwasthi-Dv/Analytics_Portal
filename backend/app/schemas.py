@@ -12,9 +12,23 @@ class UserResponse(BaseModel):
     id: int
     name: str
     email: EmailStr
+    canManageControl: bool = False
 
     class Config:
         from_attributes = True
+
+
+class ControlApiKeyCreate(BaseModel):
+    keyName: str = Field(min_length=1, max_length=120)
+    apiKey: str = Field(min_length=1, max_length=1024)
+    adminPassword: str = Field(min_length=1, max_length=256)
+
+
+class ControlUserCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    email: EmailStr
+    password: str = Field(min_length=12, max_length=128)
+    adminPassword: str = Field(min_length=1, max_length=256)
 
 
 class SyncPayload(BaseModel):
