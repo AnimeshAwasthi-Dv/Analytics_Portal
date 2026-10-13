@@ -48,12 +48,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-[#090e1a] flex items-center justify-center px-4">
+    <div className="login-page min-h-screen flex items-center justify-center px-4">
 
-      <div className="w-full max-w-md">
+      <div className="login-shell w-full max-w-md">
 
         {/* BRAND */}
-        <div className="text-center mb-8">
+        <div className="login-brand text-center mb-8">
 
           <h1 className="text-2xl font-bold text-white">
             DecXpert Control Panel
@@ -65,7 +65,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         </div>
 
         {/* LOGIN CARD */}
-        <div className="bg-white border border-slate-300 rounded-lg p-7">
+        <div className="login-card bg-white border border-slate-300 rounded-lg p-7">
 
           <div className="mb-6">
             <h2 className="text-lg font-bold text-slate-900">

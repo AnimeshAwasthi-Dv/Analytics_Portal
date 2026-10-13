@@ -71,14 +71,14 @@
 :root {
   font-family: "Aptos", "Segoe UI", sans-serif;
   color: #142c4c;
-  background: #f2f7fc;
+  background: #f7f9fc;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  --portal-ink: #142c4c;
-  --portal-muted: #536983;
-  --portal-border: #dce8f4;
-  --portal-blue: #1765e9;
+  --portal-ink: #172b45;
+  --portal-muted: #60748d;
+  --portal-border: #e3e8ef;
+  --portal-blue: #2864e8;
 }
 
 * {
@@ -90,7 +90,7 @@ body {
   min-width: 320px;
   min-height: 100vh;
   font-family: "Aptos", "Segoe UI", sans-serif;
-  background: #f2f7fc;
+  background: #f7f9fc;
   color: var(--portal-ink);
 }
 
@@ -108,7 +108,7 @@ button {
   min-height: 100vh;
   display: grid;
   grid-template-columns: 204px minmax(0, 1fr);
-  background: #f0f6fc;
+  background: #f7f9fc;
 }
 
 .portal-sidebar {
@@ -119,9 +119,9 @@ button {
   flex-direction: column;
   width: 204px;
   height: 100vh;
-  border-right: 1px solid #26364d;
-  background: #111d30;
-  color: #d7e2f0;
+  border-right: 1px solid #e5e9f0;
+  background: #fff;
+  color: #344760;
 }
 
 .portal-brand {
@@ -130,7 +130,7 @@ button {
   gap: 10px;
   min-height: 80px;
   padding: 12px 18px;
-  border-bottom: 1px solid #26364d;
+  border-bottom: 1px solid #edf0f4;
 }
 
 .portal-brand-copy strong,
@@ -140,13 +140,13 @@ button {
 }
 
 .portal-brand-copy strong {
-  color: #f4f7fb;
+  color: #2864e8;
   font-size: 14px;
 }
 
 .portal-brand-copy small {
   margin-top: 3px;
-  color: #99a9bf;
+  color: #8693a4;
   font-size: 10px;
 }
 
@@ -169,7 +169,7 @@ button {
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #a8b6c9;
+  color: #43546b;
   font-size: 12px;
   font-weight: 600;
   text-align: left;
@@ -177,27 +177,27 @@ button {
 }
 
 .portal-nav-link:hover {
-  background: #1d2d44;
-  color: #f4f8ff;
+  background: #f1f5fc;
+  color: #2459ca;
 }
 
 .portal-nav-link.active {
-  background: #1d4f91;
-  color: #fff;
+  background: #edf4ff;
+  color: #245fe0;
 }
 
 .portal-sidebar-footer {
   padding: 12px 8px;
-  border-top: 1px solid #26364d;
+  border-top: 1px solid #edf0f4;
 }
 
 .portal-logout {
-  color: #ff7184;
+  color: #ad4652;
 }
 
 .portal-logout:hover {
-  background: #3c2332;
-  color: #ff9aa8;
+  background: #fff1f1;
+  color: #963743;
 }
 
 .portal-main {
@@ -1175,6 +1175,24 @@ button {
   font-size: 13px;
   font-weight: 400;
   transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.api-key-input-row {
+  display: flex;
+  gap: 8px;
+}
+
+.api-key-input-row input {
+  min-width: 0;
+  flex: 1;
+}
+
+.control-form .api-key-input-row button {
+  width: auto;
+  flex: 0 0 auto;
+  min-width: 72px;
+  margin-top: 0;
+  padding: 8px 14px;
 }
 
 .control-form input::placeholder {
@@ -2410,4 +2428,81 @@ button.analytics-kpi-card {
     flex-direction: column;
     gap: 10px;
   }
+}
+
+.dashboard-page,
+.analytics-page,
+.traffic-page,
+.control-page {
+  background: #f7f9fc;
+}
+
+.portal-layout {
+  background: #f7f9fc;
+}
+
+.login-page {
+  min-height: 100vh;
+  padding: 32px 16px;
+  background: #f7f9fc;
+  color: var(--portal-ink);
+}
+
+.login-shell {
+  width: min(100%, 440px);
+}
+
+.login-brand h1 {
+  color: var(--portal-blue);
+  font-size: 32px;
+  font-weight: 750;
+  letter-spacing: -0.035em;
+}
+
+.login-brand p {
+  color: var(--portal-muted);
+}
+
+.login-card {
+  padding: 28px;
+  border-color: var(--portal-border);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(30, 53, 82, 0.07);
+}
+
+.login-card h2 {
+  color: var(--portal-ink);
+}
+
+.login-card form > div > label {
+  color: #43546b;
+}
+
+.login-card input {
+  min-height: 42px;
+  border-color: #d7dee8;
+  border-radius: 6px;
+}
+
+.login-card input:focus {
+  border-color: var(--portal-blue);
+  box-shadow: 0 0 0 3px rgba(40, 100, 232, 0.12);
+}
+
+.login-card form > button {
+  min-height: 43px;
+  border-radius: 6px;
+  background: var(--portal-blue);
+}
+
+.login-card form > button:hover:not(:disabled) {
+  background: #2056cc;
+}
+
+.login-card form > button:disabled {
+  background: #6e96eb;
+}
+
+.login-shell > p {
+  color: #8190a3;
 }

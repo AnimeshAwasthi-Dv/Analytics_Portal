@@ -20,7 +20,7 @@ class UserResponse(BaseModel):
 
 class ControlApiKeyCreate(BaseModel):
     keyName: str = Field(min_length=1, max_length=120)
-    apiKey: str = Field(min_length=1, max_length=1024)
+    apiKey: str = Field(min_length=1, max_length=128)
     adminPassword: str = Field(min_length=1, max_length=256)
 
 

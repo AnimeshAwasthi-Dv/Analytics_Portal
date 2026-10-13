@@ -11,6 +11,14 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react(), tailwindcss()],
     server: {
+      warmup: {
+        clientFiles: [
+          "src/main.tsx",
+          "src/App.tsx",
+          "src/pages/LoginPage.tsx",
+          "src/pages/DashboardPage.tsx",
+        ],
+      },
       ...(apiTarget && {
         proxy: {
           "/auth": { target: apiTarget, changeOrigin: true },

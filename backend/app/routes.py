@@ -1,5 +1,6 @@
 import logging
 import os
+import secrets
 from datetime import date, datetime, time, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -253,7 +254,26 @@ def create_control_api_key(
         ) from error
 
     created_key = db.query(ApiKey.id).filter(ApiKey.key_name == key_name).one()
-    return {"id": created_key.id, "keyName": key_name}
+    return JSONResponse(
+        {"id": created_key.id, "keyName": key_name, "apiKey": api_key},
+        status_code=status.HTTP_201_CREATED,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.post("/api/v1/control/api-keys/generate")
+def generate_control_api_key(
+    current_user: User = Depends(get_current_user),
+):
+    if not is_control_admin(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the configured administrator can manage Control.",
+        )
+    return JSONResponse(
+        {"apiKey": secrets.token_urlsafe(32)},
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.post("/api/v1/control/users", status_code=status.HTTP_201_CREATED)

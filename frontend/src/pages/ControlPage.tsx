@@ -44,6 +44,8 @@ export function ControlPage() {
   const [userError, setUserError] = useState("");
   const [userSuccess, setUserSuccess] = useState("");
   const [savingApiKey, setSavingApiKey] = useState(false);
+  const [generatingApiKey, setGeneratingApiKey] = useState(false);
+  const [copiedApiKey, setCopiedApiKey] = useState(false);
   const [savingUser, setSavingUser] = useState(false);
 
   const loadOverview = useCallback(async () => {
@@ -77,6 +79,34 @@ export function ControlPage() {
     };
   }, []);
 
+  const generateApiKey = async () => {
+    setApiKeyError("");
+    setApiKeySuccess("");
+    setGeneratingApiKey(true);
+    try {
+      setApiKeyValue(await api.generateControlApiKey());
+    } catch (error) {
+      setApiKeyError(errorMessage(error));
+    } finally {
+      setGeneratingApiKey(false);
+    }
+  };
+
+  const copyApiKey = async () => {
+    if (!apiKeyValue) return;
+    try {
+      await navigator.clipboard.writeText(apiKeyValue);
+      setCopiedApiKey(true);
+      window.setTimeout(() => setCopiedApiKey(false), 1800);
+    } catch {
+      setApiKeyError("Could not copy the API key. Select and copy it manually.");
+    }
+  };
+
+  useEffect(() => {
+    void generateApiKey();
+  }, []);
+
   const handleApiKeySubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setApiKeyError("");
@@ -89,9 +119,9 @@ export function ControlPage() {
         adminPassword: apiKeyAdminPassword,
       });
       setApiKeyName("");
-      setApiKeyValue("");
       setApiKeyAdminPassword("");
-      setApiKeySuccess(`${created.keyName} was securely added.`);
+      setApiKeyValue(created.apiKey);
+      setApiKeySuccess(`${created.keyName} was added. Copy the API key now; it will not be shown again.`);
       await loadOverview();
     } catch (error) {
       setApiKeyError(errorMessage(error));
@@ -173,16 +203,24 @@ export function ControlPage() {
                 />
               </label>
               <label>
-                <span>API key</span>
-                <input
-                  type="password"
-                  value={apiKeyValue}
-                  onChange={(event) => setApiKeyValue(event.target.value)}
-                  autoComplete="new-password"
-                  maxLength={1024}
-                  placeholder="Enter the instance API key"
-                  required
-                />
+                <span>{apiKeySuccess ? "Created API key" : "Generated API key"}</span>
+                <div className="api-key-input-row">
+                  <input
+                    type="text"
+                    value={apiKeyValue}
+                    readOnly
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder={generatingApiKey ? "Generating secure key..." : "Generate a key to continue"}
+                    required
+                  />
+                  <button type="button" onClick={() => void copyApiKey()} disabled={!apiKeyValue}>
+                    {copiedApiKey ? "Copied" : "Copy"}
+                  </button>
+                </div>
+                <button type="button" onClick={() => void generateApiKey()} disabled={generatingApiKey || savingApiKey}>
+                  {generatingApiKey ? "Generating..." : "Generate another key"}
+                </button>
               </label>
               <label>
                 <span>Confirm administrator password</span>
@@ -204,11 +242,11 @@ export function ControlPage() {
                   {apiKeySuccess}
                 </p>
               )}
-              <button type="submit" disabled={savingApiKey}>
-                {savingApiKey ? "Saving API key..." : "Save API key"}
+              <button type="submit" disabled={savingApiKey || generatingApiKey || !apiKeyValue}>
+                {savingApiKey ? "Creating API key..." : "Create API key"}
               </button>
               <p className="control-form-hint">
-                API keys are hashed before they are stored and are never shown in the key list.
+                Generated with cryptographically secure randomness. The key is hashed in storage and shown here only.
               </p>
             </form>
           </article>

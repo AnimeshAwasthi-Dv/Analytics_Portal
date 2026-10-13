@@ -277,10 +277,16 @@ export const api = {
     keyName: string;
     apiKey: string;
     adminPassword: string;
-  }): Promise<{ id: number; keyName: string }> {
+  }): Promise<{ id: number; keyName: string; apiKey: string }> {
     return httpClient
-      .post<{ id: number; keyName: string }>("/api/v1/control/api-keys", data)
+      .post<{ id: number; keyName: string; apiKey: string }>("/api/v1/control/api-keys", data)
       .then((response) => response.data);
+  },
+
+  async generateControlApiKey(): Promise<string> {
+    return httpClient
+      .post<{ apiKey: string }>("/api/v1/control/api-keys/generate")
+      .then((response) => response.data.apiKey);
   },
 
   async createControlUser(data: {
