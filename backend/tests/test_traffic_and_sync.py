@@ -23,6 +23,7 @@ from app.routes import (
     get_traffic_instances,
     get_traffic_overview,
     get_traffic_summary,
+    traffic_date_bounds,
     heartbeat,
     receive_sync,
 )
@@ -407,6 +408,13 @@ class TrafficAndSyncTests(unittest.TestCase):
         self.assertEqual(self.session.query(ApiKey).count(), 0)
         self.assertEqual(self.session.query(User).count(), 2)
 
+    def test_traffic_period_input_is_not_interpreted_as_sql(self):
+        with self.assertRaises(HTTPException) as raised:
+            traffic_date_bounds("30d' OR 1=1 --", None, None)
+
+        self.assertEqual(raised.exception.status_code, 400)
+        self.assertEqual(self.session.query(TrafficLog).count(), 0)
+
     def test_analytics_trends_group_records_by_received_date(self):
         now = datetime.now(timezone.utc)
         self.session.add_all(
@@ -436,8 +444,18 @@ class TrafficAndSyncTests(unittest.TestCase):
         )
         self.session.commit()
 
-        analytics = get_analytics(self.session, current_user=None)
+        executed_statements = []
 
+        def count_statement(_conn, _cursor, statement, _parameters, _context, _many):
+            executed_statements.append(statement)
+
+        event.listen(self.engine, "before_cursor_execute", count_statement)
+        try:
+            analytics = get_analytics(self.session, current_user=None)
+        finally:
+            event.remove(self.engine, "before_cursor_execute", count_statement)
+
+        self.assertEqual(len(executed_statements), 4)
         self.assertEqual(analytics["summary"]["totalRecords"], 3)
         self.assertEqual(analytics["summary"]["totalCredits"], 7)
         self.assertEqual(analytics["summary"]["sourceInstances"], 2)

@@ -488,16 +488,6 @@ def get_analytics(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    modality_rows = (
-        db.query(
-            SyncRecord.modality,
-            func.count(SyncRecord.id),
-            func.coalesce(func.sum(SyncRecord.credits_used), 0),
-        )
-        .group_by(SyncRecord.modality)
-        .all()
-    )
-
     trend_start = datetime.now(timezone.utc) - timedelta(days=365)
     received_at = SyncRecord.synced_at
     daily_rows = (
@@ -557,15 +547,19 @@ def get_analytics(
         .all()
     )
 
-    total_records = sum(records for _modality, records, _credits in modality_rows)
-    total_credits = sum(credits for _modality, _records, credits in modality_rows)
-    source_instances = len(
-        {
-            instance_code
-            for instance_code, _modality, _records, _credits in instance_rows
-            if instance_code is not None
-        }
-    )
+    modality_totals: dict[str | None, tuple[int, int]] = {}
+    source_instances: set[str] = set()
+    for instance_code, modality, records, credits in instance_rows:
+        previous_records, previous_credits = modality_totals.get(modality, (0, 0))
+        modality_totals[modality] = (
+            previous_records + int(records or 0),
+            previous_credits + int(credits or 0),
+        )
+        if instance_code is not None:
+            source_instances.add(instance_code)
+
+    total_records = sum(records for records, _credits in modality_totals.values())
+    total_credits = sum(credits for _records, credits in modality_totals.values())
 
     configured_modalities = (
         db.query(ModalityOption.name)
@@ -574,7 +568,7 @@ def get_analytics(
     )
     modality_names = {
         modality.strip().upper(): modality.strip()
-        for modality, _records, _credits in modality_rows
+        for modality in modality_totals
         if modality and modality.strip()
     }
     modality_names.update({
@@ -587,8 +581,8 @@ def get_analytics(
         "summary": {
             "totalRecords": total_records,
             "totalCredits": total_credits,
-            "totalModalities": len(modality_rows),
-            "sourceInstances": source_instances,
+            "totalModalities": len(modality_totals),
+            "sourceInstances": len(source_instances),
         },
         "byModality": [
             {
@@ -596,7 +590,7 @@ def get_analytics(
                 "records": records,
                 "credits": credits,
             }
-            for modality, records, credits in modality_rows
+            for modality, (records, credits) in modality_totals.items()
         ],
         "availableModalities": sorted(
             modality_names.values(), key=str.casefold

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import {
   api,
   type DailyInstanceTraffic,
@@ -52,18 +52,22 @@ function makeTrend(
   if (!firstDate || !lastDate) return [];
 
   const totals = new Map<string, Omit<TrendPoint, "key" | "label">>();
-  const rows = instance === "ALL"
-    ? overall
-    : byInstance.filter((row) => row.instance === instance);
-
-  for (const row of rows) {
+  const addRow = (row: DailyTraffic) => {
     const date = new Date(`${row.date}T00:00:00Z`);
-    if (Number.isNaN(date.getTime())) continue;
+    if (Number.isNaN(date.getTime())) return;
     const key = startOfPeriod(date, granularity).toISOString().slice(0, 10);
     const value = totals.get(key) ?? { requests: 0, totalDataBytes: 0 };
     value.requests += row.requests;
     value.totalDataBytes += row.totalDataBytes;
     totals.set(key, value);
+  };
+
+  if (instance === "ALL") {
+    overall.forEach(addRow);
+  } else {
+    for (const row of byInstance) {
+      if (row.instance === instance) addRow(row);
+    }
   }
 
   const cursor = startOfPeriod(new Date(`${firstDate}T00:00:00Z`), granularity);
@@ -104,7 +108,7 @@ function makeHourlyTrend(rows: HourlyInstanceTraffic[], instance: string): Trend
   }));
 }
 
-function TrafficMetricChart({
+const TrafficMetricChart = memo(function TrafficMetricChart({
   title,
   description,
   points,
@@ -125,10 +129,13 @@ function TrafficMetricChart({
   const bottom = 38;
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
-  const maximum = Math.max(1, ...points.map((point) => point[metric]));
+  const values = points.map((point) => point[metric]);
+  const maximum = Math.max(1, ...values);
   const ceiling = maximum + (maximum < 5 ? 1 : Math.ceil(maximum * 0.12));
   const slotWidth = points.length ? plotWidth / points.length : plotWidth;
   const barWidth = Math.max(3, Math.min(24, slotWidth * 0.62));
+  const labelStep = Math.max(1, Math.ceil(points.length / 8));
+  const hasData = values.some((value) => value > 0);
   const formatValue =
     metric === "requests"
       ? (value: number) => numberFormat.format(value)
@@ -138,7 +145,7 @@ function TrafficMetricChart({
     <article className="traffic-chart-card">
       <h2>{title}</h2>
       {description && <p className="traffic-chart-description">{description}</p>}
-      {points.some((point) => point[metric] > 0) ? (
+      {hasData ? (
         <svg
           className="traffic-trend-chart"
           viewBox={`0 0 ${width} ${height}`}
@@ -171,8 +178,7 @@ function TrafficMetricChart({
           {chartType === "line" && (
             <g>
               <polyline
-                points={points.map((point, index) => {
-                  const value = point[metric];
+                points={                values.map((value, index) => {
                   const x = left + slotWidth * index + slotWidth / 2;
                   const y = top + plotHeight - (value / ceiling) * plotHeight;
                   return `${x},${y}`;
@@ -181,10 +187,9 @@ function TrafficMetricChart({
                 className="traffic-data-line"
               />
               {points.map((point, index) => {
-                const value = point[metric];
+                const value = values[index];
                 const x = left + slotWidth * index + slotWidth / 2;
                 const y = top + plotHeight - (value / ceiling) * plotHeight;
-                const labelStep = Math.max(1, Math.ceil(points.length / 8));
                 const showLabel = index === 0 || index === points.length - 1 || index % labelStep === 0;
                 return (
                   <g key={point.key}>
@@ -212,11 +217,10 @@ function TrafficMetricChart({
             </g>
           )}
           {chartType === "bar" && points.map((point, index) => {
-            const value = point[metric];
+            const value = values[index];
             const barHeight = (value / ceiling) * plotHeight;
             const x = left + slotWidth * index + (slotWidth - barWidth) / 2;
             const y = top + plotHeight - barHeight;
-            const labelStep = Math.max(1, Math.ceil(points.length / 8));
             const showLabel =
               index === 0 ||
               index === points.length - 1 ||
@@ -262,7 +266,7 @@ function TrafficMetricChart({
       )}
     </article>
   );
-}
+});
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error && error.message

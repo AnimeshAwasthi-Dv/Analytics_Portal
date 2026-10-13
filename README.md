@@ -475,4 +475,10 @@ http://localhost:5173
 * The current database table creation uses SQLAlchemy `create_all()`. Use migrations for future schema changes.
 * The default local cookie configuration is intended for development, not production deployment.
 
+Analytics queries use SQLAlchemy-bound parameters; request values are treated as
+data rather than interpolated into SQL. The analytics endpoint reuses its
+per-instance aggregation for modality totals, and the latest migration adds
+indexes for sync date ordering and sync-log aggregation. Apply it from the
+`backend` directory with `alembic upgrade head`.
+
 **DecXpert Control Panel — Backend Setup Guide**

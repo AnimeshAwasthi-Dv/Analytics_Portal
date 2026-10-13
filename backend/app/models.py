@@ -81,6 +81,9 @@ class TrafficLog(Base):
 
 class SyncRecord(Base):
     __tablename__ = "sync_records"
+    __table_args__ = (
+        Index("ix_sync_records_synced_at_id", "synced_at", "id"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
 
@@ -127,6 +130,9 @@ class ModalityOption(Base):
 
 class SyncLog(Base):
     __tablename__ = "sync_logs"
+    __table_args__ = (
+        Index("ix_sync_logs_event_instance", "event_type", "instance_code"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
 

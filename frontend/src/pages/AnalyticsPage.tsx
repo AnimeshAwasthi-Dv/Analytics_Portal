@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { api } from "../services/api.ts";
@@ -53,7 +53,7 @@ function startOfPeriod(date: Date, granularity: Granularity): Date {
   return result;
 }
 
-function TrendChart({
+const TrendChart = memo(function TrendChart({
   points,
   series,
 }: {
@@ -148,9 +148,9 @@ function TrendChart({
       )}
     </div>
   );
-}
+});
 
-function StudySharePie({
+const StudySharePie = memo(function StudySharePie({
   rows,
   total,
   modality,
@@ -225,7 +225,7 @@ function StudySharePie({
       )}
     </div>
   );
-}
+});
 
 function csvCell(value: string | number): string {
   const text = String(value);
@@ -353,15 +353,20 @@ export function AnalyticsPage() {
         credits: number;
       }
     >();
+    const selectedInstances =
+      selectedDescriptionInstances === null
+        ? null
+        : new Set(selectedDescriptionInstances);
+    const normalizedSelectedModality = selectedModality.toLocaleUpperCase();
     for (const row of analytics?.byDescription ?? []) {
       if (
         dateRangeInvalid ||
         row.date < startDate ||
         row.date > endDate ||
-        (selectedDescriptionInstances !== null &&
-          !selectedDescriptionInstances.includes(row.instanceCode)) ||
+        (selectedInstances !== null &&
+          !selectedInstances.has(row.instanceCode)) ||
         (selectedModality !== "ALL" &&
-          row.modality.toLocaleUpperCase() !== selectedModality.toLocaleUpperCase())
+          row.modality.toLocaleUpperCase() !== normalizedSelectedModality)
       ) {
         continue;
       }
