@@ -11,21 +11,29 @@ db_pass = os.getenv("DATABASE_PASSWORD")
 db_host = os.getenv("DATABASE_HOST", "localhost")
 db_port = os.getenv("DATABASE_PORT", "5432")
 db_name = os.getenv("DATABASE_NAME")
+database_url = os.getenv("DATABASE_URL")
 
-if os.getenv("DATABASE_URL"):
-    DATABASE_URL = os.getenv("DATABASE_URL")
+if database_url:
+    DATABASE_URL = database_url
 elif db_user and db_pass and db_name:
     DATABASE_URL = (
         f"postgresql+psycopg://{db_user}:{db_pass}@{db_host}:{db_port}/{db_name}"
     )
 else:
-    # Local fallback to SQLite so app works immediately out of the box without crashing
-    DATABASE_URL = "sqlite:///./central_sync.db"
+    raise RuntimeError(
+        "PostgreSQL configuration is required: set DATABASE_URL or "
+        "DATABASE_USER, DATABASE_PASSWORD, and DATABASE_NAME"
+    )
 
-if DATABASE_URL.startswith("sqlite"):
-    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-else:
-    engine = create_engine(DATABASE_URL)
+if DATABASE_URL.startswith("postgresql+psycopg2://"):
+    DATABASE_URL = DATABASE_URL.replace(
+        "postgresql+psycopg2://", "postgresql+psycopg://", 1
+    )
+
+if not DATABASE_URL.startswith(("postgresql://", "postgresql+psycopg://")):
+    raise RuntimeError("Only PostgreSQL DATABASE_URL values are supported")
+
+engine = create_engine(DATABASE_URL)
 
 SessionLocal = sessionmaker(
     autocommit=False,

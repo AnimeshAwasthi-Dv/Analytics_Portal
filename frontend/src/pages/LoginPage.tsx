@@ -1,108 +1,150 @@
-import React, { useState } from "react";
-import { Layers, Lock, Mail, ArrowRight, ShieldCheck } from "lucide-react";
-import { api } from "../services/api";
+import React, { FormEvent, useState } from "react";
+import { api } from "../services/api.ts";
+import type { User } from "../services/api";
 
 interface LoginPageProps {
-  onLoginSuccess: (user: any) => void;
+  onLoginSuccess: (user: User) => void;
 }
 
-export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
-  const [email, setEmail] = useState("admin@local.com");
-  const [password, setPassword] = useState("adminpassword123");
-  const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState("");
+export const LoginPage: React.FC<LoginPageProps> = ({
+  onLoginSuccess,
+}) => {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setErrorMsg("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+
+    setError("");
+
+    if (!email.trim() || !password) {
+      setError("Email and password are required.");
+      return;
+    }
 
     try {
-      const res = await api.login(email, password);
-      onLoginSuccess(res.user || { name: "System Admin", email });
+      setLoading(true);
+
+      const response = await api.login(
+        email.trim(),
+        password
+      );
+
+      onLoginSuccess(response.user);
     } catch (err: any) {
-      setErrorMsg(err.message || "Failed to authenticate");
+      console.error("Login error:", err);
+
+      setError(
+        err?.response?.data?.detail ||
+          err?.message ||
+          "Invalid email or password."
+      );
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#090e1a] flex items-center justify-center p-4">
-      <div className="max-w-md w-full bg-[#0c1322] border border-slate-800 rounded-2xl shadow-2xl p-8 space-y-6 text-slate-200">
-        
-        {/* Brand Header */}
-        <div className="text-center space-y-2">
-          <div className="w-12 h-12 rounded-xl bg-blue-600 mx-auto flex items-center justify-center text-white shadow-lg shadow-blue-500/30">
-            <Layers className="w-7 h-7" />
-          </div>
-          <h1 className="text-xl font-bold text-white tracking-wide">Central Sync Portal</h1>
-          <p className="text-xs text-slate-400">
-            Centralized Real-Time Data Synchronization Architecture
+    <div className="login-page min-h-screen flex items-center justify-center px-4">
+
+      <div className="login-shell w-full max-w-md">
+
+        {/* BRAND */}
+        <div className="login-brand text-center mb-8">
+
+          <h1 className="text-2xl font-bold text-white">
+            DecXpert Control Panel
+          </h1>
+
+          <p className="text-sm text-slate-400 mt-2">
+            Centralized Data Synchronization
           </p>
         </div>
 
-        {/* Info Card */}
-        <div className="p-3.5 rounded-xl bg-slate-800/60 border border-slate-700/60 text-xs text-slate-300 space-y-1">
-          <div className="flex items-center gap-1.5 font-semibold text-blue-400">
-            <ShieldCheck className="w-4 h-4" />
-            <span>Architecture Overview</span>
-          </div>
-          <p className="text-[11px] text-slate-400 leading-relaxed">
-            Consolidating 5 independent database instances via dedicated daemon Sync Agents into one Central Ingestion API.
-          </p>
-        </div>
+        {/* LOGIN CARD */}
+        <div className="login-card bg-white border border-slate-300 rounded-lg p-7">
 
-        {errorMsg && (
-          <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs font-semibold">
-            {errorMsg}
-          </div>
-        )}
+          <div className="mb-6">
+            <h2 className="text-lg font-bold text-slate-900">
+              Sign in
+            </h2>
 
-        <form onSubmit={handleSubmit} className="space-y-4 text-xs">
-          <div>
-            <label className="block text-slate-300 font-medium mb-1.5">Admin Email</label>
-            <div className="relative">
-              <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-2.5 pointer-events-none" />
+            <p className="text-xs text-slate-500 mt-1">
+              Sign in to access the synchronization dashboard.
+            </p>
+          </div>
+
+          {/* ERROR */}
+          {error && (
+            <div className="mb-5 p-3 rounded border border-rose-200 bg-rose-50">
+              <p className="text-xs font-medium text-rose-700" role="alert">
+                {error}
+              </p>
+            </div>
+          )}
+
+          <form
+            onSubmit={handleSubmit}
+            className="space-y-5"
+          >
+
+            {/* EMAIL */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-2">
+                Email Address
+              </label>
+
               <input
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                className="w-full pl-9 pr-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                onChange={(event) =>
+                  setEmail(event.target.value)
+                }
                 placeholder="admin@local.com"
+                autoComplete="email"
+                className="w-full px-3 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded outline-none focus:border-blue-500"
+                disabled={loading}
               />
             </div>
-          </div>
 
-          <div>
-            <label className="block text-slate-300 font-medium mb-1.5">Password</label>
-            <div className="relative">
-              <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-2.5 pointer-events-none" />
+            {/* PASSWORD */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-2">
+                Password
+              </label>
+
               <input
                 type="password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                className="w-full pl-9 pr-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                placeholder="••••••••••••"
+                onChange={(event) =>
+                  setPassword(event.target.value)
+                }
+                placeholder="Enter your password"
+                autoComplete="current-password"
+                className="w-full px-3 py-2.5 text-sm text-slate-900 bg-white border border-slate-300 rounded outline-none focus:border-blue-500"
+                disabled={loading}
               />
             </div>
-          </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg shadow-md shadow-blue-600/30 transition-all flex items-center justify-center gap-2 text-xs disabled:opacity-50"
-          >
-            {loading ? "Authenticating..." : "Sign In to Central Portal"}
-            <ArrowRight className="w-4 h-4" />
-          </button>
-        </form>
+            {/* SUBMIT */}
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-2.5 bg-blue-700 hover:bg-blue-800 disabled:bg-blue-500 text-white text-sm font-semibold rounded"
+            >
+              {loading ? "Signing in..." : "Sign In"}
+            </button>
 
-        <div className="text-center text-[11px] text-slate-500 font-mono">
-          Default: <span className="text-slate-400">admin@local.com</span> / <span className="text-slate-400">adminpassword123</span>
+          </form>
         </div>
+
+        <p className="text-center text-[11px] text-slate-500 mt-6">
+          DecXpert Control Panel
+        </p>
+
       </div>
     </div>
   );

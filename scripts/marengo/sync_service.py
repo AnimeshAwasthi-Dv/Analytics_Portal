@@ -44,6 +44,7 @@ CHANNEL = "report_sync_channel"
 #
 report_queue = queue.Queue()
 
+# queue for retrying 
 
 # Queue containing ONLY failed payloads.
 #
@@ -352,6 +353,8 @@ def fetch_study_payload(study_id):
             payload = {
 
                 "modality": row["modality"],
+
+                "study_description": row["investigation_name"],
 
                 "processing_created_at": (
                     row["processing_created_at"].isoformat()

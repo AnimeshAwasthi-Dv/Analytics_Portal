@@ -1,420 +1,415 @@
-import axios from "axios";
-import {
-  DatabaseInstance,
-  SyncHistoryItem,
-  SyncLogEvent,
-  IncomingEvent,
-  SyncReport,
-  ApiKeyItem,
-  ApiEndpointStat,
-  SystemKPIs,
-} from "../types";
+import type { AnalyticsResponse, DashboardResponse } from "../types";
 
-const BASE_URL = "http://localhost:8000";
+export interface User {
+  id: number;
+  name: string;
+  email: string;
+  canManageControl: boolean;
+}
 
-export const axiosInstance = axios.create({
-  baseURL: BASE_URL,
-  withCredentials: true,
-  headers: {
-    "Content-Type": "application/json",
-  },
-});
+export interface LicensePlan { id: number; name: string; service: "XRAY" | "CT"; testTypeId: number | null; credits: number; validityDays: number; cost: number }
+export interface DesktopLicense { id: number; licenseKey: string; service: "XRAY" | "CT"; platform: string; planId: number; planName: string; status: string; statusCode: string; fullName: string | null; username: string | null; mobile: string | null; vendor: string | null; location: string | null; address: string | null; latitude: number | null; longitude: number | null; creditsTotal:number; creditsRemaining: number; creditAvailableOnline: number; ctCredits: number; systemHash:string|null; macAddress:string|null; lastSync:string|null; activationCount:number; activationAttemptCount:number; successfulValidationCount:number; lastValidationAt:string|null; fraudDetected:boolean; fraudAttemptCount:number; lastFraudAttempt:string|null; lastFraudReason:string|null; rateLimitTriggered:boolean; carriedForwardFrom:number|null; carriedForwardTo:number|null; carryForwardDate:string|null; blockedAt:string|null; blockedReason:string|null; errorLogs:string|null; startsAt: string | null; endsAt: string | null; createdAt: string | null; updatedAt:string|null }
+export interface LicenseAnalytics { total: number; active: number; creditsUsed: number; validationActivity: number; statuses: Record<string, number>; platforms: Record<string, number>; plans: Array<{name:string; count:number}>; organisations: Array<{name:string; count:number}>; recent: Array<{licenseKey:string;service:string;platform:string;status:string;credits:number;vendor:string;createdAt:string|null}> }
+export interface LicenseKeyAnalytics { license: DesktopLicense; planCredits:number; creditsUsed:number; creditsRemaining:number; usagePercent:number; validations:number; activationCount:number; activationAttempts:number; fraudAttempts:number; fraudDetected:boolean; activity:Array<{date:string|null;type:string}> }
 
-// Central Mock Store for the 5 independent databases
-let mockInstances: DatabaseInstance[] = [
-  {
-    id: "DB-01",
-    name: "Portal Ahmedabad",
-    database: "portal_ahmedabad_db",
-    host: "192.168.1.101",
-    port: 5432,
-    syncAgentStatus: "Running",
-    lastSyncTime: "10:20:15",
-    lastHeartbeat: "10:20:15",
-    recordsSynced: 245120,
-    recordsPending: 120,
-    failedSyncs: 2,
-    successRate: 99.8,
-    status: "Online",
-    clientCode: "MARENGO_AHMEDABAD",
-    totalRecords24h: 38400,
-    totalRecords7d: 245120,
-  },
-  {
-    id: "DB-02",
-    name: "Portal Delhi",
-    database: "portal_delhi_db",
-    host: "192.168.1.102",
-    port: 5432,
-    syncAgentStatus: "Running",
-    lastSyncTime: "10:20:11",
-    lastHeartbeat: "10:20:11",
-    recordsSynced: 310420,
-    recordsPending: 83,
-    failedSyncs: 3,
-    successRate: 99.7,
-    status: "Online",
-    clientCode: "MAX_DELHI",
-    totalRecords24h: 42100,
-    totalRecords7d: 310420,
-  },
-  {
-    id: "DB-03",
-    name: "Portal Mumbai",
-    database: "portal_mumbai_db",
-    host: "192.168.1.103",
-    port: 5432,
-    syncAgentStatus: "Running",
-    lastSyncTime: "10:19:58",
-    lastHeartbeat: "10:19:58",
-    recordsSynced: 198320,
-    recordsPending: 340,
-    failedSyncs: 8,
-    successRate: 98.9,
-    status: "Online",
-    clientCode: "FORTIS_MUMBAI",
-    totalRecords24h: 29500,
-    totalRecords7d: 198320,
-  },
-  {
-    id: "DB-04",
-    name: "Portal Bangalore",
-    database: "portal_bangalore_db",
-    host: "192.168.1.104",
-    port: 5432,
-    syncAgentStatus: "Running",
-    lastSyncTime: "10:19:43",
-    lastHeartbeat: "10:19:43",
-    recordsSynced: 280120,
-    recordsPending: 72,
-    failedSyncs: 1,
-    successRate: 99.9,
-    status: "Online",
-    clientCode: "MANIPAL_BLR",
-    totalRecords24h: 36200,
-    totalRecords7d: 280120,
-  },
-  {
-    id: "DB-05",
-    name: "Portal Chennai",
-    database: "portal_chennai_db",
-    host: "192.168.1.105",
-    port: 5432,
-    syncAgentStatus: "Running",
-    lastSyncTime: "10:19:31",
-    lastHeartbeat: "10:19:31",
-    recordsSynced: 214580,
-    recordsPending: 91,
-    failedSyncs: 3,
-    successRate: 99.6,
-    status: "Online",
-    clientCode: "APOLLO_CHENNAI",
-    totalRecords24h: 31800,
-    totalRecords7d: 214580,
-  },
-];
+export interface ControlOverview {
+  apiKeys: Array<{ id: number; keyName: string }>;
+  users: Array<{
+    id: number;
+    name: string;
+    email: string;
+    isActive: boolean;
+  }>;
+}
 
-let mockReports: SyncReport[] = [
-  {
-    report_id: "report_123",
-    study_uid: "1.2.840.113619.2.55.3.2831",
-    source_instance_id: "DB-01",
-    client_code: "MARENGO_AHMEDABAD",
-    modality: "XR",
-    service_name: "xray_chest",
-    report_status: "PUSHED",
-    timestamps: {
-      study_created_at: "2026-10-02T10:00:00",
-      ai_generated_at: "2026-10-02T10:08:00",
-      reviewed_at: "2026-10-02T10:15:00",
-      approved_at: "2026-10-02T10:18:00",
-      pushed_at: "2026-10-02T10:20:00",
-    },
-    credits: {
-      credits_used: 3,
-    },
-  },
-  {
-    report_id: "report_124",
-    study_uid: "1.2.840.113619.2.55.3.2832",
-    source_instance_id: "DB-02",
-    client_code: "MAX_DELHI",
-    modality: "CT",
-    service_name: "ct_brain_plain",
-    report_status: "PUSHED",
-    timestamps: {
-      study_created_at: "2026-10-02T10:05:00",
-      ai_generated_at: "2026-10-02T10:12:00",
-      reviewed_at: "2026-10-02T10:17:00",
-      approved_at: "2026-10-02T10:19:00",
-      pushed_at: "2026-10-02T10:21:00",
-    },
-    credits: {
-      credits_used: 5,
-    },
-  },
-  {
-    report_id: "report_125",
-    study_uid: "1.2.840.113619.2.55.3.2833",
-    source_instance_id: "DB-03",
-    client_code: "FORTIS_MUMBAI",
-    modality: "MR",
-    service_name: "mri_lumbar_spine",
-    report_status: "APPROVED",
-    timestamps: {
-      study_created_at: "2026-10-02T10:10:00",
-      ai_generated_at: "2026-10-02T10:16:00",
-      reviewed_at: "2026-10-02T10:22:00",
-      approved_at: "2026-10-02T10:25:00",
-      pushed_at: "",
-    },
-    credits: {
-      credits_used: 6,
-    },
-  },
-  {
-    report_id: "report_126",
-    study_uid: "1.2.840.113619.2.55.3.2834",
-    source_instance_id: "DB-04",
-    client_code: "MANIPAL_BLR",
-    modality: "XR",
-    service_name: "xray_spine_ap_lat",
-    report_status: "PUSHED",
-    timestamps: {
-      study_created_at: "2026-10-02T10:12:00",
-      ai_generated_at: "2026-10-02T10:18:00",
-      reviewed_at: "2026-10-02T10:22:00",
-      approved_at: "2026-10-02T10:24:00",
-      pushed_at: "2026-10-02T10:26:00",
-    },
-    credits: {
-      credits_used: 3,
-    },
-  },
-  {
-    report_id: "report_127",
-    study_uid: "1.2.840.113619.2.55.3.2835",
-    source_instance_id: "DB-05",
-    client_code: "APOLLO_CHENNAI",
-    modality: "US",
-    service_name: "usg_whole_abdomen",
-    report_status: "REVIEWED",
-    timestamps: {
-      study_created_at: "2026-10-02T10:15:00",
-      ai_generated_at: "2026-10-02T10:20:00",
-      reviewed_at: "2026-10-02T10:27:00",
-      approved_at: "",
-      pushed_at: "",
-    },
-    credits: {
-      credits_used: 4,
-    },
-  },
-  {
-    report_id: "report_128",
-    study_uid: "1.2.840.113619.2.55.3.2836",
-    source_instance_id: "DB-01",
-    client_code: "MARENGO_AHMEDABAD",
-    modality: "CT",
-    service_name: "ct_abdomen_pelvis",
-    report_status: "PUSHED",
-    timestamps: {
-      study_created_at: "2026-10-02T10:18:00",
-      ai_generated_at: "2026-10-02T10:24:00",
-      reviewed_at: "2026-10-02T10:28:00",
-      approved_at: "2026-10-02T10:30:00",
-      pushed_at: "2026-10-02T10:32:00",
-    },
-    credits: {
-      credits_used: 5,
-    },
-  },
-];
+export type TrafficPeriod = "today" | "yesterday" | "7d" | "30d" | "custom";
 
-let mockIncomingEvents: IncomingEvent[] = [
-  { eventId: "EVT-10001", instanceId: "DB-01", entity: "Report", operation: "INSERT", receivedAt: "10:20:01", processedAt: "10:20:02", status: "SUCCESS" },
-  { eventId: "EVT-10002", instanceId: "DB-03", entity: "Report", operation: "UPDATE", receivedAt: "10:20:03", processedAt: "10:20:04", status: "SUCCESS" },
-  { eventId: "EVT-10003", instanceId: "DB-05", entity: "Report", operation: "INSERT", receivedAt: "10:20:05", processedAt: "—", status: "FAILED" },
-  { eventId: "EVT-10004", instanceId: "DB-02", entity: "QCRecord", operation: "INSERT", receivedAt: "10:20:07", processedAt: "10:20:08", status: "SUCCESS" },
-  { eventId: "EVT-10005", instanceId: "DB-04", entity: "Report", operation: "INSERT", receivedAt: "10:20:10", processedAt: "10:20:11", status: "SUCCESS" },
-  { eventId: "EVT-10006", instanceId: "DB-01", entity: "QCRecord", operation: "UPDATE", receivedAt: "10:20:14", processedAt: "10:20:15", status: "SUCCESS" },
-  { eventId: "EVT-10007", instanceId: "DB-03", entity: "Report", operation: "DELETE", receivedAt: "10:20:18", processedAt: "10:20:19", status: "SUCCESS" },
-  { eventId: "EVT-10008", instanceId: "DB-05", entity: "Report", operation: "INSERT", receivedAt: "10:20:20", processedAt: "10:20:21", status: "QUEUED" },
-];
+export interface TrafficFilter {
+  period: TrafficPeriod;
+  startDate?: string;
+  endDate?: string;
+}
 
-let mockSyncLogs: SyncLogEvent[] = [
-  { id: "LOG-1", timestamp: "10:20:15", instanceId: "DB-01", eventId: "EVT-1234", endpoint: "/api/v1/sync", operation: "INSERT", status: "SUCCESS", responseTime: "120ms", message: "Data synchronized successfully (5 records)" },
-  { id: "LOG-2", timestamp: "10:20:11", instanceId: "DB-02", eventId: "EVT-1235", endpoint: "/api/v1/sync", operation: "INSERT", status: "SUCCESS", responseTime: "98ms", message: "Batch sync complete (8 records)" },
-  { id: "LOG-3", timestamp: "10:19:58", instanceId: "DB-03", eventId: "EVT-1236", endpoint: "/api/v1/sync", operation: "UPDATE", status: "SUCCESS", responseTime: "185ms", message: "Study status updated" },
-  { id: "LOG-4", timestamp: "10:19:43", instanceId: "DB-04", eventId: "EVT-1237", endpoint: "/api/v1/sync", operation: "INSERT", status: "SUCCESS", responseTime: "84ms", message: "New QC records committed" },
-  { id: "LOG-5", timestamp: "10:19:31", instanceId: "DB-05", eventId: "EVT-1238", endpoint: "/api/v1/sync", operation: "INSERT", status: "FAILED", responseTime: "502ms", message: "Connection timeout on ingestion pipeline (error 504)" },
-  { id: "LOG-6", timestamp: "10:18:50", instanceId: "DB-03", eventId: "EVT-1239", endpoint: "/api/v1/heartbeat", operation: "HEARTBEAT", status: "SUCCESS", responseTime: "14ms", message: "Agent heartbeat acknowledged" },
-];
+export interface TrafficOverview {
+  totalRequests: number;
+  totalDataBytes: number;
+  activeInstances: number;
+  averageResponseTimeMs: number;
+  successRate: number;
+  highestTrafficInstance: {
+    name: string;
+    requests: number;
+    totalDataBytes: number;
+  } | null;
+}
 
-let mockApiKeys: ApiKeyItem[] = [
-  { id: "KEY-01", instanceId: "DB-01", instanceName: "Portal Ahmedabad", keyMasked: "sk_live_a89f••••••••9941", createdAt: "2026-09-01", lastUsed: "Just now", status: "Active" },
-  { id: "KEY-02", instanceId: "DB-02", instanceName: "Portal Delhi", keyMasked: "sk_live_b42c••••••••7732", createdAt: "2026-09-01", lastUsed: "Just now", status: "Active" },
-  { id: "KEY-03", instanceId: "DB-03", instanceName: "Portal Mumbai", keyMasked: "sk_live_c91d••••••••1054", createdAt: "2026-09-01", lastUsed: "Just now", status: "Active" },
-  { id: "KEY-04", instanceId: "DB-04", instanceName: "Portal Bangalore", keyMasked: "sk_live_d33e••••••••8819", createdAt: "2026-09-01", lastUsed: "Just now", status: "Active" },
-  { id: "KEY-05", instanceId: "DB-05", instanceName: "Portal Chennai", keyMasked: "sk_live_e77f••••••••3390", createdAt: "2026-09-01", lastUsed: "Just now", status: "Active" },
-];
+export interface InstanceTraffic {
+  instance: string;
+  name: string;
+  requests: number;
+  totalDataBytes: number;
+  averageResponseTimeMs: number;
+  successRate: number;
+}
+
+export interface DailyTraffic {
+  date: string;
+  requests: number;
+  totalDataBytes: number;
+}
+
+export interface DailyInstanceTraffic extends DailyTraffic {
+  instance: string;
+}
+
+export interface HourlyInstanceTraffic {
+  hour: number;
+  instance: string;
+  requests: number;
+  totalDataBytes: number;
+  averageResponseTimeMs: number;
+}
+
+export interface SourceSyncActivity {
+  totalStudies: number;
+  creditsUsed: number;
+  activeInstances: number;
+  lastSync: string | null;
+  instances: Array<{
+    instance: string;
+    name: string;
+    studies: number;
+    creditsUsed: number;
+    lastSync: string | null;
+  }>;
+  daily: Array<{
+    date: string;
+    instance: string;
+    studies: number;
+    creditsUsed: number;
+  }>;
+}
+
+export interface TrafficAnalyticsData {
+  startDate: string;
+  endDate: string;
+  overview: TrafficOverview;
+  daily: DailyTraffic[];
+  dailyByInstance: DailyInstanceTraffic[];
+  hourlyByInstance: HourlyInstanceTraffic[];
+  instances: InstanceTraffic[];
+  sourceActivity: SourceSyncActivity;
+}
+
+/*
+ * Backend URL
+ *
+ * frontend:
+ * http://localhost:5173
+ *
+ * backend:
+ * http://localhost:8000
+ *
+ * Make sure frontend/.env contains:
+ *
+ * VITE_API_BASE_URL=http://localhost:8000
+ */
+const API_BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL ?? ""
+).replace(/\/$/, "");
+
+interface ApiRequestOptions {
+  method?: "GET" | "POST" | "PUT" | "DELETE";
+  data?: unknown;
+  params?: Record<string, string | undefined>;
+  cache?: RequestCache;
+}
+
+interface ApiError extends Error {
+  response: {
+    data: unknown;
+    status: number;
+  };
+}
+
+function getErrorMessage(data: unknown, status: number): string {
+  if (typeof data === "object" && data !== null && "detail" in data) {
+    const detail = data.detail;
+    if (typeof detail === "string") {
+      return detail;
+    }
+    if (Array.isArray(detail)) {
+      return detail
+        .map((item) =>
+          typeof item === "object" && item !== null && "msg" in item
+            ? String(item.msg)
+            : String(item)
+        )
+        .join(", ");
+    }
+  }
+
+  return `Request failed with status code ${status}`;
+}
+
+
+async function apiRequest<T>(
+  endpoint: string,
+  options: ApiRequestOptions = {}
+): Promise<T> {
+  const query = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(options.params ?? {})) {
+    if (value !== undefined) {
+      query.set(key, value);
+    }
+  }
+
+  const search = query.toString();
+  const method = options.method ?? "GET";
+  const hasBody = options.data !== undefined;
+
+  const response = await fetch(
+    `${API_BASE_URL}${endpoint}${search ? `?${search}` : ""}`,
+    {
+      method,
+      credentials: "include",
+      ...(options.cache ? { cache: options.cache } : {}),
+      ...(hasBody
+        ? {
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(options.data),
+          }
+        : {}),
+    }
+  );
+
+  const responseText = await response.text();
+  let responseData: unknown = responseText;
+
+  if (responseText) {
+    try {
+      responseData = JSON.parse(responseText);
+    } catch {
+      responseData = responseText;
+    }
+  }
+
+  if (!response.ok) {
+    const error = new Error(
+      getErrorMessage(responseData, response.status)
+    ) as ApiError;
+
+    error.response = {
+      data: responseData,
+      status: response.status,
+    };
+
+    throw error;
+  }
+
+  return responseData as T;
+}
+
+
+const httpClient = {
+  get<T>(
+    endpoint: string,
+    config?: { params?: Record<string, string | undefined>; cache?: RequestCache }
+  ): Promise<{ data: T }> {
+    return apiRequest<T>(endpoint, {
+      params: config?.params,
+      cache: config?.cache,
+    }).then((data) => ({
+      data,
+    }));
+  },
+  post<T>(endpoint: string, data?: unknown): Promise<{ data: T }> {
+    return apiRequest<T>(endpoint, { method: "POST", data }).then((result) => ({
+      data: result,
+    }));
+  },
+  put<T>(endpoint: string, data: unknown): Promise<{data:T}> {
+    return apiRequest<T>(endpoint, {method:"PUT", data}).then(data => ({data}));
+  },
+  delete<T>(endpoint: string): Promise<{data:T}> {
+    return apiRequest<T>(endpoint, {method:"DELETE"}).then(data => ({data}));
+  },
+};
+
+let currentUserRequest: Promise<User> | null = null;
+let dashboardRequest: Promise<DashboardResponse> | null = null;
+let analyticsRequest: Promise<AnalyticsResponse> | null = null;
 
 export const api = {
-  // System Health & KPIs
-  async getKPIs(): Promise<SystemKPIs> {
-    const totalRecords = mockInstances.reduce((sum, i) => sum + i.recordsSynced, 0);
-    const totalPending = mockInstances.reduce((sum, i) => sum + i.recordsPending, 0);
-    const totalFailed = mockInstances.reduce((sum, i) => sum + i.failedSyncs, 0);
-    const onlineCount = mockInstances.filter((i) => i.status === "Online").length;
-
-    return {
-      totalInstances: mockInstances.length,
-      onlineInstances: onlineCount,
-      recordsSynced: totalRecords,
-      recordsPending: totalPending,
-      failedSyncs: totalFailed,
-      apiStatus: "ONLINE",
-      requestsToday: 48293,
-      successfulRequests: 48276,
-      failedRequests: 17,
-      avgResponseTime: "84ms",
-    };
+  async getLicensePlans(service?: string): Promise<LicensePlan[]> {
+    return httpClient.get<{items: LicensePlan[] }>("/api/v1/desktop/plans", { params: { service } }).then(r => r.data.items);
   },
-
-  // Database Instances
-  async getInstances(): Promise<DatabaseInstance[]> {
-    return [...mockInstances];
+  async createLicensePlan(data: {name:string; service:string; credits:number; validityDays:number; cost:number}): Promise<LicensePlan> {
+    return httpClient.post<LicensePlan>("/api/v1/desktop/plans", data).then(r => r.data);
   },
-
-  async getInstanceById(id: string): Promise<DatabaseInstance | null> {
-    const found = mockInstances.find((i) => i.id === id);
-    return found ? { ...found } : null;
+  async updateLicensePlan(id:number, data: {name:string; service:string; credits:number; validityDays:number; cost:number}): Promise<LicensePlan> {
+    return httpClient.put<LicensePlan>(`/api/v1/desktop/plans/${id}`, data).then(r => r.data);
   },
-
-  async toggleInstanceStatus(id: string, newStatus: 'Online' | 'Offline' | 'Delayed'): Promise<DatabaseInstance> {
-    const idx = mockInstances.findIndex((i) => i.id === id);
-    if (idx !== -1) {
-      mockInstances[idx].status = newStatus;
-      mockInstances[idx].syncAgentStatus = newStatus === "Offline" ? "Stopped" : "Running";
-      return { ...mockInstances[idx] };
+  async deleteLicensePlan(id:number): Promise<void> {
+    await httpClient.delete(`/api/v1/desktop/plans/${id}`);
+  },
+  async getDesktopLicenses(service:string, search?:string): Promise<DesktopLicense[]> {
+    return httpClient.get<{items: DesktopLicense[] }>("/api/v1/desktop/licenses", { params: { service, search } }).then(r => r.data.items);
+  },
+  async createDesktopLicense(data: Record<string, unknown>): Promise<DesktopLicense> {
+    return httpClient.post<DesktopLicense>("/api/v1/desktop/licenses", data).then(r => r.data);
+  },
+  async updateDesktopLicense(id:number, data: Record<string, unknown>): Promise<DesktopLicense> {
+    return httpClient.put<DesktopLicense>(`/api/v1/desktop/licenses/${id}`, data).then(r => r.data);
+  },
+  async deleteDesktopLicense(id:number): Promise<void> {
+    await httpClient.delete(`/api/v1/desktop/licenses/${id}`);
+  },
+  async bulkCreateDesktopLicenses(data: Record<string, unknown>): Promise<{created:number}> {
+    return httpClient.post<{created:number}>("/api/v1/desktop/licenses/bulk", data).then(r => r.data);
+  },
+  async getLicenseAnalytics(service:string): Promise<LicenseAnalytics> {
+    return httpClient.get<LicenseAnalytics>("/api/v1/desktop/analytics", { params: { service } }).then(r => r.data);
+  },
+  async getLicenseKeyAnalytics(id:number): Promise<LicenseKeyAnalytics> {
+    return httpClient.get<LicenseKeyAnalytics>(`/api/v1/desktop/licenses/${id}/analytics`).then(r => r.data);
+  },
+  // --------------------------------------------------
+  // GET CURRENT USER
+  // --------------------------------------------------
+  async getCurrentUser(): Promise<User> {
+    if (!currentUserRequest) {
+      currentUserRequest = httpClient
+        .get<User>("/auth/me")
+        .then((response) => response.data);
     }
-    throw new Error("Instance not found");
-  },
+    const request = currentUserRequest;
 
-  async triggerSync(id: string): Promise<{ success: boolean; message: string }> {
-    const idx = mockInstances.findIndex((i) => i.id === id);
-    if (idx !== -1) {
-      const added = Math.floor(Math.random() * 25) + 5;
-      mockInstances[idx].recordsSynced += added;
-      mockInstances[idx].recordsPending = Math.max(0, mockInstances[idx].recordsPending - added);
-      const now = new Date().toTimeString().split(" ")[0];
-      mockInstances[idx].lastSyncTime = now;
-      mockInstances[idx].lastHeartbeat = now;
-
-      // Add log
-      mockSyncLogs.unshift({
-        id: `LOG-${Date.now()}`,
-        timestamp: now,
-        instanceId: id,
-        eventId: `EVT-${Math.floor(Math.random() * 90000) + 10000}`,
-        endpoint: "/api/v1/sync",
-        operation: "SYNC",
-        status: "SUCCESS",
-        responseTime: `${Math.floor(Math.random() * 80) + 40}ms`,
-        message: `Manual sync triggered: ${added} records processed`,
-      });
-
-      return { success: true, message: `Synced ${added} records from ${mockInstances[idx].name}` };
-    }
-    throw new Error("Instance not found");
-  },
-
-  async getInstanceSyncHistory(instanceId: string): Promise<SyncHistoryItem[]> {
-    return [
-      { id: "SH-101", timestamp: "10:20:15", records: 120, duration: "1.2s", status: "SUCCESS", errorCount: 0 },
-      { id: "SH-102", timestamp: "10:15:00", records: 240, duration: "2.4s", status: "SUCCESS", errorCount: 0 },
-      { id: "SH-103", timestamp: "10:10:00", records: 180, duration: "1.9s", status: "SUCCESS", errorCount: 0 },
-      { id: "SH-104", timestamp: "10:05:00", records: 95, duration: "1.1s", status: "SUCCESS", errorCount: 0 },
-      { id: "SH-105", timestamp: "10:00:00", records: 310, duration: "3.5s", status: "SUCCESS", errorCount: 0 },
-      { id: "SH-106", timestamp: "09:55:00", records: 0, duration: "5.0s", status: "FAILED", errorCount: 1 },
-    ];
-  },
-
-  // Incoming Data Events
-  async getIncomingEvents(): Promise<IncomingEvent[]> {
-    return [...mockIncomingEvents];
-  },
-
-  // Reports
-  async getReports(): Promise<SyncReport[]> {
-    return [...mockReports];
-  },
-
-  async getReportById(reportId: string): Promise<SyncReport | null> {
-    const report = mockReports.find((r) => r.report_id === reportId);
-    return report ? { ...report } : null;
-  },
-
-  // Logs
-  async getSyncLogs(): Promise<SyncLogEvent[]> {
-    return [...mockSyncLogs];
-  },
-
-  // API Management & Keys
-  async getApiKeys(): Promise<ApiKeyItem[]> {
-    return [...mockApiKeys];
-  },
-
-  async revokeApiKey(id: string): Promise<void> {
-    const key = mockApiKeys.find((k) => k.id === id);
-    if (key) key.status = "Revoked";
-  },
-
-  async regenerateApiKey(id: string): Promise<ApiKeyItem> {
-    const key = mockApiKeys.find((k) => k.id === id);
-    if (key) {
-      key.keyMasked = `sk_live_${Math.random().toString(36).substring(2, 6)}••••••••${Math.random().toString(36).substring(2, 6)}`;
-      key.status = "Active";
-      key.lastUsed = "Just now";
-      return { ...key };
-    }
-    throw new Error("Key not found");
-  },
-
-  async getApiEndpoints(): Promise<ApiEndpointStat[]> {
-    return [
-      { method: "POST", path: "/api/v1/sync", status: "Healthy", requests24h: 31820, avgLatency: "82ms", description: "Batch synchronization ingestion endpoint from Sync Agents" },
-      { method: "POST", path: "/api/v1/heartbeat", status: "Healthy", requests24h: 14400, avgLatency: "12ms", description: "Heartbeat health check beacon from active agent processes" },
-      { method: "GET", path: "/api/v1/instance/{id}/status", status: "Healthy", requests24h: 1200, avgLatency: "24ms", description: "Fetch specific database connection and replication state" },
-      { method: "GET", path: "/api/v1/sync/status/{id}", status: "Healthy", requests24h: 890, avgLatency: "19ms", description: "Query individual batch replication status" },
-      { method: "GET", path: "/api/v1/logs", status: "Healthy", requests24h: 2450, avgLatency: "45ms", description: "Query central ingestion and error logs" },
-      { method: "GET", path: "/api/v1/analytics/summary", status: "Healthy", requests24h: 1840, avgLatency: "38ms", description: "Aggregated reporting KPIs and sync trends" },
-    ];
-  },
-
-  // Central Auth (FastAPI compatible)
-  async getCurrentUser() {
-    const res = await axiosInstance.get("/auth/me");
-    return res.data;
-  },
-
-  async login(email: string, password: string) {
     try {
-      const res = await axiosInstance.post("/auth/login", { email, password });
-      return res.data;
-    } catch (e: any) {
-      if (email === "admin@local.com" && password === "adminpassword123") {
-        return { message: "Login successful", user: { id: 1, name: "System Admin", email: "admin@local.com" } };
+      return await request;
+    } finally {
+      if (currentUserRequest === request) {
+        currentUserRequest = null;
       }
-      throw new Error(e.response?.data?.detail || "Invalid credentials");
     }
   },
 
-  async logout() {
-    try {
-      await axiosInstance.post("/auth/logout");
-    } catch {
-      // fallback
+  // --------------------------------------------------
+  // LOGIN
+  // --------------------------------------------------
+  async login(
+    email: string,
+    password: string
+  ): Promise<{
+    message: string;
+    user: User;
+  }> {
+    const response = await httpClient.post<{
+      message: string;
+      user: User;
+    }>("/auth/login", {
+      email,
+      password,
+    });
+
+    return response.data;
+  },
+
+  // --------------------------------------------------
+  // LOGOUT
+  // --------------------------------------------------
+  async logout(): Promise<void> {
+    await httpClient.post("/auth/logout");
+  },
+
+  async getControlOverview(): Promise<ControlOverview> {
+    return httpClient
+      .get<ControlOverview>("/api/v1/control", { cache: "no-store" })
+      .then((response) => response.data);
+  },
+
+  async createControlApiKey(data: {
+    keyName: string;
+    apiKey: string;
+    adminPassword: string;
+  }): Promise<{ id: number; keyName: string; apiKey: string }> {
+    return httpClient
+      .post<{ id: number; keyName: string; apiKey: string }>("/api/v1/control/api-keys", data)
+      .then((response) => response.data);
+  },
+
+  async generateControlApiKey(): Promise<string> {
+    return httpClient
+      .post<{ apiKey: string }>("/api/v1/control/api-keys/generate")
+      .then((response) => response.data.apiKey);
+  },
+
+  async createControlUser(data: {
+    name: string;
+    email: string;
+    password: string;
+    adminPassword: string;
+  }): Promise<{ id: number; name: string; email: string; isActive: boolean }> {
+    return httpClient
+      .post<{ id: number; name: string; email: string; isActive: boolean }>(
+        "/api/v1/control/users",
+        data
+      )
+      .then((response) => response.data);
+  },
+
+  // --------------------------------------------------
+  // DASHBOARD
+  // --------------------------------------------------
+  async getDashboard(): Promise<DashboardResponse> {
+    if (!dashboardRequest) {
+      dashboardRequest = httpClient
+        .get<DashboardResponse>("/api/v1/dashboard")
+        .then((response) => response.data);
     }
+    const request = dashboardRequest;
+
+    try {
+      return await request;
+    } finally {
+      if (dashboardRequest === request) {
+        dashboardRequest = null;
+      }
+    }
+  },
+
+  // --------------------------------------------------
+  // ANALYTICS
+  // --------------------------------------------------
+  async getAnalytics(): Promise<AnalyticsResponse> {
+    if (!analyticsRequest) {
+      analyticsRequest = httpClient
+        .get<AnalyticsResponse>("/api/v1/analytics", { cache: "no-store" })
+        .then((response) => response.data);
+    }
+    const request = analyticsRequest;
+
+    try {
+      return await request;
+    } finally {
+      if (analyticsRequest === request) {
+        analyticsRequest = null;
+      }
+    }
+  },
+
+  async getTrafficAnalytics(
+    filter: TrafficFilter
+  ): Promise<TrafficAnalyticsData> {
+    const params = {
+      period: filter.period,
+      ...(filter.period === "custom"
+        ? { start_date: filter.startDate, end_date: filter.endDate }
+        : {}),
+    };
+    return httpClient
+      .get<TrafficAnalyticsData>("/api/v1/analytics/traffic/summary", { params })
+      .then((response) => response.data);
   },
 };

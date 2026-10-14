@@ -2,12 +2,42 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      if (window.location.pathname !== "/" && window.location.pathname !== "/login") {
+        document.documentElement.classList.add("app-starting");
+      }
+    </script>
+    <style>
+      .initial-startup {
+        display: none;
+      }
+
+      .app-starting .initial-startup {
+        display: flex;
+        min-height: 100vh;
+        align-items: center;
+        justify-content: center;
+        padding: 1rem;
+        background: #090e1a;
+        color: #cbd5e1;
+        font: 14px system-ui, sans-serif;
+      }
+    </style>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Central Sync Portal | Enterprise Admin</title>
+    <meta
+      name="description"
+      content="DecXpert Control Panel for managing sync instances, API credentials, users, and analytics."
+    />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>DecXpert Control Panel</title>
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
+    <div id="root">
+      <div class="initial-startup" role="status">
+        Connecting to DecXpert Control Panel...
+      </div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

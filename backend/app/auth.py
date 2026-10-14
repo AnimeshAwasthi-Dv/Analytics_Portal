@@ -1,5 +1,7 @@
 
 import os
+import secrets
+import logging
 from datetime import datetime, timedelta, timezone
 
 from jose import jwt, JWTError
@@ -10,9 +12,25 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User
 
-SECRET_KEY = os.getenv("JWT_SECRET", "development-only-secret")
+logger = logging.getLogger(__name__)
+APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
+SECRET_KEY = os.getenv("JWT_SECRET")
+if not SECRET_KEY:
+    if APP_ENV in {"production", "prod"}:
+        raise RuntimeError("JWT_SECRET must be configured in production")
+    SECRET_KEY = secrets.token_urlsafe(32)
+    logger.warning("JWT_SECRET is unset; using a temporary local-development key")
+elif APP_ENV in {"production", "prod"} and len(SECRET_KEY) < 32:
+    raise RuntimeError("JWT_SECRET must contain at least 32 characters in production")
+
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+if APP_ENV in {"production", "prod"} and ALGORITHM != "HS256":
+    raise RuntimeError("JWT_ALGORITHM must be HS256 in production")
 TOKEN_EXPIRATION = int(os.getenv("JWT_EXPIRATION", "60"))
+COOKIE_SECURE = os.getenv(
+    "COOKIE_SECURE",
+    str(APP_ENV in {"production", "prod"}).lower(),
+).strip().lower() in {"1", "true", "yes"}
 
 password_hash = PasswordHash.recommended()
 
