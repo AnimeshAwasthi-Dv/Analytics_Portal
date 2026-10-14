@@ -1,6 +1,6 @@
 # Desktop license schema
 
-The Desktop EXE license pages use `ai.license_plans` and `ai.license_detail`. The Alembic revision `h7a2c9e41b60` creates these tables if needed and copies existing records from the former `public.license_plans` and `public.desktop_licenses` tables. It keeps the legacy tables for rollback/reference.
+The desktop license database uses `ai.license_plans` and `ai.license_detail`, matching the supplied PostgreSQL schema. Alembic revision `h7a2c9e41b60` creates these tables and migrates records from the legacy public tables. The following revision, `c3f7a2d91e54`, removes the legacy public tables after migration. The `ai` tables and their records remain in place.
 
 ## Service mapping
 

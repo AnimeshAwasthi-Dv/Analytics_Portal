@@ -8,7 +8,7 @@ import logging
 import os
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -20,6 +20,7 @@ from sqlalchemy.engine import Engine, make_url
 
 from app.database import SessionLocal
 from app.models import Instance, SyncLog, SyncRecord
+from app.license_live_sync import install_configured_source_triggers, listen_license
 
 load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s | %(levelname)s | %(message)s")
@@ -162,7 +163,10 @@ def install_source_trigger(source: Source) -> None:
 
 
 def install_source_triggers(source_filter: str | None = None) -> bool:
-    sources = load_sources()
+    license_url_configured = bool(os.getenv("SOURCE_LICENSE_DATABASE_URL", "").strip())
+    sources = load_sources(
+        allow_empty=license_url_configured and source_filter is None,
+    )
     if source_filter:
         sources = [source for source in sources if source.name.casefold() == source_filter.casefold()
                    or source.instance_code.casefold() == source_filter.casefold()]
@@ -175,10 +179,16 @@ def install_source_triggers(source_filter: str | None = None) -> bool:
         except Exception as exc:
             failed = True
             logger.error("Could not install trigger for %s: %s", source.name, exc)
+    try:
+        install_configured_source_triggers()
+        logger.info("Installed license change triggers for Validation Portal")
+    except Exception as exc:
+        failed = True
+        logger.error("Could not install license change triggers: %s", exc)
     return not failed
 
 
-def load_sources() -> list[Source]:
+def load_sources(*, allow_empty: bool = False) -> list[Source]:
     raw = os.getenv("PORTAL_SOURCE_DATABASES", "").strip()
     if raw:
         try:
@@ -198,7 +208,7 @@ def load_sources() -> list[Source]:
             for name, profile, code, env_name in direct_sources
             if os.getenv(env_name, "").strip()
         ]
-    if not isinstance(configs, list) or not configs:
+    if not isinstance(configs, list) or (not configs and not allow_empty):
         raise RuntimeError(
             "No source database URLs configured. Set MARENGO_DATABASE_URL, "
             "PACS_DATABASE_URL, or API_CONTROL_DATABASE_URL in backend/.env; "
@@ -398,20 +408,40 @@ def _listen_to_source(source: Source, batch_size: int, stop_event: threading.Eve
 
 
 def listen_sources(source_filter: str | None = None, dry_run: bool = False) -> None:
-    sources = load_sources()
+    license_url_configured = bool(os.getenv("SOURCE_LICENSE_DATABASE_URL", "").strip())
+    if license_url_configured and dry_run:
+        logger.warning("License live sync is disabled in --dry-run mode")
+        license_url_configured = False
+    sources = load_sources(allow_empty=license_url_configured and source_filter is None)
     if source_filter:
         sources = [source for source in sources if source.name.casefold() == source_filter.casefold()
                    or source.instance_code.casefold() == source_filter.casefold()]
         if not sources:
             raise RuntimeError(f"No configured source matches {source_filter!r}.")
     batch_size = max(1, int(os.getenv("SOURCE_SYNC_BATCH_SIZE", "500")))
-    logger.info("Starting database listeners for %s source(s)", len(sources))
+    logger.info(
+        "Starting listeners for %s portal source(s)%s",
+        len(sources), ", plus Validation Portal licenses" if license_url_configured else "",
+    )
+    if not license_url_configured:
+        logger.warning("Validation Portal license listener is not configured; set SOURCE_LICENSE_DATABASE_URL to include it")
     stop_event = threading.Event()
     try:
-        with ThreadPoolExecutor(max_workers=len(sources), thread_name_prefix="source-listener") as pool:
+        worker_count = len(sources) + int(license_url_configured)
+        with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="source-listener") as pool:
             futures = [pool.submit(_listen_to_source, source, batch_size, stop_event, dry_run) for source in sources]
-            for future in futures:
-                future.result()
+            if license_url_configured:
+                futures.append(pool.submit(listen_license, stop_event))
+            try:
+                done, _ = wait(futures, return_when=FIRST_EXCEPTION)
+                for future in done:
+                    future.result()
+            except KeyboardInterrupt:
+                logger.info("Stopping source and license listeners")
+                stop_event.set()
+            except BaseException:
+                stop_event.set()
+                raise
     except KeyboardInterrupt:
         logger.info("Stopping source listeners")
         stop_event.set()
@@ -421,8 +451,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Import successful studies directly from portal PostgreSQL databases.")
     parser.add_argument("--source", help="Only import the named source or instance_code.")
     parser.add_argument("--dry-run", action="store_true", help="Read source rows and count candidates without writing to the portal DB.")
-    parser.add_argument("--install-triggers", action="store_true", help="Install source DB triggers that notify this worker when records become SUCCESS.")
-    parser.add_argument("--listen", action="store_true", help="Listen for PostgreSQL notifications; requires triggers to be installed in each source DB.")
+    parser.add_argument("--install-triggers", action="store_true", help="Install SUCCESS triggers for configured portals and change triggers for the Validation Portal license tables.")
+    parser.add_argument("--listen", action="store_true", help="Listen to configured Marengo, PACS, API Control, and (when configured) Validation Portal license databases together.")
     parser.add_argument("--watch", action="store_true", help="Deprecated alias for --listen.")
     args = parser.parse_args()
     if args.install_triggers:

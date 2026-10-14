@@ -1244,6 +1244,20 @@ def _service_from_plan(plan: LicensePlan) -> str:
     return "XRAY"
 
 
+def _license_scope_filter(service: str):
+    """Match service scopes and infer the service for platform-only scopes."""
+    normalized_service = _license_service(service)
+    service_id = _test_type_id(normalized_service)
+    scope = func.upper(func.replace(func.coalesce(DesktopLicense.license_app_scope, ""), " ", ""))
+    token_pattern = rf"(^|,){normalized_service}(,|$)"
+    service_scope = scope.op("~")(r"(^|,)(XRAY|CT)(,|$)")
+    return (
+        scope.op("~")(r"(^|,)ALL(,|$)")
+        | scope.op("~")(token_pattern)
+        | (~service_scope & (LicensePlan.test_type_id == service_id))
+    )
+
+
 def _parse_geo(value: str | None):
     if not value:
         return None, None
@@ -1266,8 +1280,11 @@ def _serialize_plan(plan: LicensePlan):
 
 def _serialize_license(item: DesktopLicense, plan: LicensePlan):
     latitude, longitude = _parse_geo(item.geo_location)
+    service = item.license_app_scope
+    if not service or service.upper() not in {"XRAY", "CT"}:
+        service = _service_from_plan(plan)
     return {"id": item.license_id, "licenseKey": item.license_key,
-            "service": item.license_app_scope or _service_from_plan(plan),
+            "service": service,
             "platform": item.app_version_type, "planId": item.plan_id, "planName": plan.plan_name,
             "status": _CODE_TO_STATUS.get(item.status, item.status), "statusCode": item.status,
             "fullName": item.fullname, "username": item.username, "mobile": item.mobile,
@@ -1294,7 +1311,13 @@ def list_license_plans(service: str | None = None, db: Session = Depends(get_db)
                        current_user: User = Depends(get_current_user)):
     query = db.query(LicensePlan)
     if service:
-        query = query.filter(LicensePlan.test_type_id == _test_type_id(_license_service(service)))
+        normalized_service = _license_service(service)
+        service_filter = LicensePlan.test_type_id == _test_type_id(normalized_service)
+        if normalized_service == "XRAY":
+            # Legacy source plans may not have a test_type_id; the serializer
+            # already treats NULL as XRAY.
+            service_filter = service_filter | LicensePlan.test_type_id.is_(None)
+        query = query.filter(service_filter)
     return {"items": [_serialize_plan(p) for p in query.order_by(LicensePlan.test_type_id, LicensePlan.plan_name).all()]}
 
 
@@ -1371,7 +1394,7 @@ def list_desktop_licenses(service: str | None = None, search: str | None = None,
                           current_user: User = Depends(get_current_user)):
     query = db.query(DesktopLicense, LicensePlan).join(LicensePlan, DesktopLicense.plan_id == LicensePlan.plan_id)
     if service:
-        query = query.filter(DesktopLicense.license_app_scope == _license_service(service))
+        query = query.filter(_license_scope_filter(service))
     if status_filter:
         query = query.filter(DesktopLicense.status == _STATUS_TO_CODE.get(status_filter.upper(), status_filter))
     if search:
@@ -1456,7 +1479,7 @@ def desktop_license_analytics(service: str | None = None, db: Session = Depends(
                               current_user: User = Depends(get_current_user)):
     query = db.query(DesktopLicense, LicensePlan).join(LicensePlan, DesktopLicense.plan_id == LicensePlan.plan_id)
     if service:
-        query = query.filter(DesktopLicense.license_app_scope == _license_service(service))
+        query = query.filter(_license_scope_filter(service))
     pairs = query.order_by(DesktopLicense.license_id.desc()).limit(5000).all()
     licenses = [item for item, _ in pairs]
     status_counts: dict[str, int] = {}

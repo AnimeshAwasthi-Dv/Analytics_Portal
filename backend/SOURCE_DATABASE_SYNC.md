@@ -18,6 +18,7 @@ Set `DATABASE_URL` to the portal database. Paste each source connection string i
 MARENGO_DATABASE_URL=postgresql+psycopg://readonly:URL_ENCODED_PASSWORD@MARENGO_DB_HOST:5432/SOURCE_DB?sslmode=require
 PACS_DATABASE_URL=
 API_CONTROL_DATABASE_URL=
+SOURCE_LICENSE_DATABASE_URL=
 SOURCE_SYNC_BATCH_SIZE=500
 ```
 
@@ -64,7 +65,7 @@ Start the persistent listener after the triggers have been installed:
 python -m app.source_sync --listen
 ```
 
-The worker listens to all configured sources concurrently. On startup and after reconnecting, it performs one catch-up scan to import successful rows created while it was offline. If the listener disconnects, it retries; other source listeners continue.
+The worker listens to all configured sources concurrently. Set `SOURCE_LICENSE_DATABASE_URL` to include Validation Portal license plans and keys. License triggers are installed automatically by the listener, so its source database role must be allowed to create the function and triggers in `ai`. The listener can run with only the license URL configured. On startup and after reconnecting, it performs a catch-up scan to import rows created while it was offline. If a listener disconnects, it retries; other source listeners continue.
 
 `LISTEN`/`NOTIFY` is a signal, not a durable queue. Startup/reconnect reconciliation recovers missed events, and the source ID constraint prevents duplicate imports. Keep one listener worker running. The legacy `--watch` command remains an alias for `--listen`.
 
