@@ -19,7 +19,7 @@ export interface DatabaseInstance {
 }
 
 export interface SyncRecord {
-  id: number;
+  id: number | string;
   instanceCode: string;
   modality: string | null;
   studyDescription: string | null;

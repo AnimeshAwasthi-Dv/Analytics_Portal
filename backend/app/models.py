@@ -13,6 +13,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import ENUM
 from sqlalchemy.orm import validates
 from sqlalchemy.sql import func
 
@@ -167,6 +168,79 @@ class SyncLog(Base):
         DateTime(timezone=True),
         server_default=func.now()
     )
+
+
+MARENGO_JOB_STATUS = ("QUEUED", "PROCESSING", "SUCCESS", "FAILED")
+MARENGO_REVIEW_STATUS = ("PENDING", "IN_REVIEW", "SAVED", "APPROVED", "PUSHED", "FAILED")
+MARENGO_RETURN_FORMAT = (
+    "DICOM_ENCAPSULATED_PDF", "DICOM_SECONDARY_CAPTURE", "HL7", "HTML", "PDF", "DOCX",
+)
+
+
+class MarengoStudy(Base):
+    """Analytics-safe study fields; report JSON and patient identifiers stay in Marengo."""
+    __tablename__ = "marengo_studies"
+    __table_args__ = (Index("ix_marengo_studies_modality_status", "modality", "status"),)
+
+    instance_code = Column(String(50), primary_key=True)
+    id = Column(String, primary_key=True)
+    modality = Column(String, nullable=False)
+    status = Column(ENUM(*MARENGO_JOB_STATUS, name="marengo_job_status", create_type=False), nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+
+class MarengoJob(Base):
+    __tablename__ = "marengo_jobs"
+    __table_args__ = (
+        Index("ix_marengo_jobs_study_status", "study_id", "status"),
+        Index("ix_marengo_jobs_status_created", "status", "created_at"),
+    )
+
+    instance_code = Column(String(50), primary_key=True)
+    id = Column(String, primary_key=True)
+    study_id = Column(String, nullable=True)
+    service_name = Column(String, nullable=False)
+    status = Column(ENUM(*MARENGO_JOB_STATUS, name="marengo_job_status", create_type=False), nullable=False, server_default="QUEUED")
+    attempts = Column(Integer, nullable=False, server_default="0")
+    has_error = Column(Boolean, nullable=False, server_default="false")
+    latency_ms = Column(Integer, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False)
+
+
+class MarengoReportReview(Base):
+    __tablename__ = "marengo_report_reviews"
+    __table_args__ = (
+        Index("ix_marengo_report_reviews_modality_status", "modality", "status"),
+        Index("ix_marengo_report_reviews_study", "study_id"),
+    )
+
+    instance_code = Column(String(50), primary_key=True)
+    id = Column(String, primary_key=True)
+    study_id = Column(String, nullable=True)
+    service_name = Column(String, nullable=False)
+    modality = Column(String, nullable=True)
+    status = Column(ENUM(*MARENGO_REVIEW_STATUS, name="marengo_report_review_status", create_type=False), nullable=False, server_default="PENDING")
+    output_format = Column(ENUM(*MARENGO_RETURN_FORMAT, name="marengo_return_format", create_type=False), nullable=False, server_default="DICOM_ENCAPSULATED_PDF")
+    locked = Column(Boolean, nullable=False, server_default="false")
+    generated_at = Column(DateTime, nullable=False, server_default=func.now())
+    pushed_at = Column(DateTime, nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False)
+
+
+class MarengoUsageLog(Base):
+    __tablename__ = "marengo_usage_logs"
+    __table_args__ = (Index("ix_marengo_usage_logs_created", "created_at"),)
+
+    instance_code = Column(String(50), primary_key=True)
+    id = Column(String, primary_key=True)
+    service_name = Column(String, nullable=False)
+    credits_used = Column(Integer, nullable=False)
+    success = Column(Boolean, nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
 
 
 class LicensePlan(Base):

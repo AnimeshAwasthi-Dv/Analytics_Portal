@@ -45,6 +45,7 @@ const DesktopLicensesPage = lazy(async () => ({ default: (await import("./pages/
 const LicensePlansPage = lazy(async () => ({ default: (await import("./pages/LicensePlansPage")).LicensePlansPage }));
 const LicenseAnalyticsPage = lazy(async () => ({ default: (await import("./pages/LicenseAnalyticsPage")).LicenseAnalyticsPage }));
 const LicenseKeyAnalyticsPage = lazy(async () => ({ default: (await import("./pages/LicenseKeyAnalyticsPage")).LicenseKeyAnalyticsPage }));
+const MarengoAnalyticsPage = lazy(async () => ({ default: (await import("./pages/MarengoAnalyticsPage")).MarengoAnalyticsPage }));
 
 function PortalSidebar({
   onLogout,
@@ -112,6 +113,12 @@ function PortalSidebar({
           className={({ isActive }) => `portal-nav-link${isActive ? " active" : ""}`}
         >
           <span>Study Analytics</span>
+        </NavLink>
+        <NavLink
+          to="/marengo-analytics"
+          className={({ isActive }) => `portal-nav-link${isActive ? " active" : ""}`}
+        >
+          <span>Marengo Analytics</span>
         </NavLink>
         <NavLink
           to="/traffic-analytics"
@@ -296,6 +303,11 @@ function App() {
               <Navigate to="/login" replace />
             )
           }
+        />
+
+        <Route
+          path="/marengo-analytics"
+          element={user ? <PortalShell onLogout={handleLogout} canManageControl={user.canManageControl}><MarengoAnalyticsPage /></PortalShell> : <Navigate to="/login" replace />}
         />
 
         <Route
