@@ -4,15 +4,17 @@ The portal reads successful work directly from the three configured PostgreSQL d
 
 | Source | Profile | Source table |
 | --- | --- | --- |
-| Marengo | `marengo` | `public.studies`, latest processing job, and bridge description |
+| Marengo | `marengo` | `public.studies`, `public.jobs`, `public.report_reviews`, and `public.usage_logs` |
 | PACS | `pacs` | `public.processing_jobs` and bridge-study metadata |
 | API Control | `api_control` | `public.jobs` |
 
 The worker writes to the portal database's `sync_records` table. It uses `(instance_code, source_record_id)` to make repeated imports idempotent.
 
+Marengo analytics are also synchronized into the dedicated `marengo_studies`, `marengo_jobs`, `marengo_report_reviews`, and `marengo_usage_logs` tables. Before reading source rows, the worker validates the expected column types, nullability, defaults, and enum labels against the live Marengo database. Study IDs link jobs through nullable `jobs.studyId`; rows with a missing or unmatched study remain available in job totals. Report JSON, patient names/IDs, accessions, and usage messages are not copied. Job error text is reduced to a boolean error indicator to avoid importing potentially identifying details.
+
 ## Configure connections
 
-Set `DATABASE_URL` to the portal database. Paste each source connection string into `backend/.env`; leave unused sources blank:
+Set `DATABASE_URL` to the portal database. Paste the Marengo source connection string on the `MARENGO_DATABASE_URL` line in `backend/.env`. Keep the Validation Portal license database on its separate `SOURCE_LICENSE_DATABASE_URL` line:
 
 ```dotenv
 MARENGO_DATABASE_URL=postgresql+psycopg://readonly:URL_ENCODED_PASSWORD@MARENGO_DB_HOST:5432/SOURCE_DB?sslmode=require
@@ -21,6 +23,8 @@ API_CONTROL_DATABASE_URL=
 SOURCE_LICENSE_DATABASE_URL=
 SOURCE_SYNC_BATCH_SIZE=500
 ```
+
+The Marengo connection must point to the Marengo source database, not the Validation Portal license database. The source sync reads only `public.studies`, `public.jobs`, `public.report_reviews`, and `public.usage_logs` for this profile.
 
 Alternatively, set `PORTAL_SOURCE_DATABASES` to a JSON array when you need custom names or instance codes. URL-encode reserved characters in passwords. The worker host must be allowed to connect to each source DB through its security group/firewall. The listener needs only connect/read privileges; a database administrator can install triggers once if the runtime account is read-only.
 
@@ -59,13 +63,22 @@ python -m app.source_sync --dry-run
 python -m app.source_sync --source Marengo --dry-run
 ```
 
-Start the persistent listener after the triggers have been installed:
+For a one-time full backfill of all four Marengo analytics tables, run from `backend`:
 
 ```bash
-python -m app.source_sync --listen
+python -m app.clone_marengo_db --dry-run --batch-size 1000
+python -m app.clone_marengo_db --batch-size 1000
 ```
 
-The worker listens to all configured sources concurrently. Set `SOURCE_LICENSE_DATABASE_URL` to include Validation Portal license plans and keys. License triggers are installed automatically by the listener, so its source database role must be allowed to create the function and triggers in `ai`. The listener can run with only the license URL configured. On startup and after reconnecting, it performs a catch-up scan to import rows created while it was offline. If a listener disconnects, it retries; other source listeners continue.
+The clone reads only `MARENGO_DATABASE_URL` and writes to `DATABASE_URL`. It is safe to rerun and upserts by source ID plus instance code. It uses the same live-schema validation and analytics-only field mapping as ongoing sync. It does not copy patient identifiers or names, accessions, report JSON, usage messages, or raw job error text.
+
+Start both Marengo analytics and Validation Portal license listeners from the single live-sync entry point:
+
+```bash
+python -m app.license_live_sync
+```
+
+`license_live_sync.py` selects the configured Marengo source and starts the Validation listener separately. It does not start PACS or API Control. Use the distinct URLs for Marengo and Validation; do not put the Validation connection URL in `MARENGO_DATABASE_URL`. On startup and after reconnecting, each listener performs its own catch-up scan.
 
 `LISTEN`/`NOTIFY` is a signal, not a durable queue. Startup/reconnect reconciliation recovers missed events, and the source ID constraint prevents duplicate imports. Keep one listener worker running. The legacy `--watch` command remains an alias for `--listen`.
 
@@ -79,4 +92,9 @@ FROM sync_records
 WHERE source_record_id IS NOT NULL
 GROUP BY instance_code
 ORDER BY instance_code;
+
+SELECT 'studies' AS source_table, instance_code, COUNT(*) FROM marengo_studies GROUP BY instance_code
+UNION ALL SELECT 'jobs', instance_code, COUNT(*) FROM marengo_jobs GROUP BY instance_code
+UNION ALL SELECT 'report_reviews', instance_code, COUNT(*) FROM marengo_report_reviews GROUP BY instance_code
+UNION ALL SELECT 'usage_logs', instance_code, COUNT(*) FROM marengo_usage_logs GROUP BY instance_code;
 ```

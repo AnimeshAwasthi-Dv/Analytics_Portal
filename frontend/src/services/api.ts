@@ -7,10 +7,17 @@ export interface User {
   canManageControl: boolean;
 }
 
+export interface PageResult<T> { items: T[]; total: number; page: number; pageSize: number; totalPages: number }
 export interface LicensePlan { id: number; name: string; service: "XRAY" | "CT"; testTypeId: number | null; credits: number; validityDays: number; cost: number }
 export interface DesktopLicense { id: number; licenseKey: string; service: "XRAY" | "CT"; platform: string; planId: number; planName: string; status: string; statusCode: string; fullName: string | null; username: string | null; mobile: string | null; vendor: string | null; location: string | null; address: string | null; latitude: number | null; longitude: number | null; creditsTotal:number; creditsRemaining: number; creditAvailableOnline: number; ctCredits: number; systemHash:string|null; macAddress:string|null; lastSync:string|null; activationCount:number; activationAttemptCount:number; successfulValidationCount:number; lastValidationAt:string|null; fraudDetected:boolean; fraudAttemptCount:number; lastFraudAttempt:string|null; lastFraudReason:string|null; rateLimitTriggered:boolean; carriedForwardFrom:number|null; carriedForwardTo:number|null; carryForwardDate:string|null; blockedAt:string|null; blockedReason:string|null; errorLogs:string|null; startsAt: string | null; endsAt: string | null; createdAt: string | null; updatedAt:string|null }
 export interface LicenseAnalytics { total: number; active: number; creditsUsed: number; validationActivity: number; statuses: Record<string, number>; platforms: Record<string, number>; plans: Array<{name:string; count:number}>; organisations: Array<{name:string; count:number}>; recent: Array<{licenseKey:string;service:string;platform:string;status:string;credits:number;vendor:string;createdAt:string|null}> }
 export interface LicenseKeyAnalytics { license: DesktopLicense; planCredits:number; creditsUsed:number; creditsRemaining:number; usagePercent:number; validations:number; activationCount:number; activationAttempts:number; fraudAttempts:number; fraudDetected:boolean; activity:Array<{date:string|null;type:string}> }
+export interface MarengoAnalytics {
+  studies: { total: number; success: number; failed: number; byModality: Array<{ modality: string; total: number; success: number; failed: number }> };
+  jobs: { total: number; processingErrors: number; retryAttempts: number; averageLatencyMs: number; byStatus: Array<{ status: string; count: number; errors: number }>; byModalityStatus: Array<{ modality: string; status: string; count: number; errors: number }> };
+  reviews: { total: number; pushed: number; byModalityStatus: Array<{ modality: string; status: string; count: number }> };
+  usage: { entries: number; creditsUsed: number; successful: number; failed: number };
+}
 
 export interface ControlOverview {
   apiKeys: Array<{ id: number; keyName: string }>;
@@ -245,6 +252,9 @@ export const api = {
   async getLicensePlans(service?: string): Promise<LicensePlan[]> {
     return httpClient.get<{items: LicensePlan[] }>("/api/v1/desktop/plans", { params: { service } }).then(r => r.data.items);
   },
+  async getLicensePlansPage(service: string, page: number, pageSize: number): Promise<PageResult<LicensePlan>> {
+    return httpClient.get<PageResult<LicensePlan>>("/api/v1/desktop/plans", { params: { service, page, page_size: pageSize } }).then(r => r.data);
+  },
   async createLicensePlan(data: {name:string; service:string; credits:number; validityDays:number; cost:number}): Promise<LicensePlan> {
     return httpClient.post<LicensePlan>("/api/v1/desktop/plans", data).then(r => r.data);
   },
@@ -256,6 +266,9 @@ export const api = {
   },
   async getDesktopLicenses(service:string, search?:string): Promise<DesktopLicense[]> {
     return httpClient.get<{items: DesktopLicense[] }>("/api/v1/desktop/licenses", { params: { service, search } }).then(r => r.data.items);
+  },
+  async getDesktopLicensesPage(service: string, search: string, page: number, pageSize: number): Promise<PageResult<DesktopLicense>> {
+    return httpClient.get<PageResult<DesktopLicense>>("/api/v1/desktop/licenses", { params: { service, search, page, page_size: pageSize } }).then(r => r.data);
   },
   async createDesktopLicense(data: Record<string, unknown>): Promise<DesktopLicense> {
     return httpClient.post<DesktopLicense>("/api/v1/desktop/licenses", data).then(r => r.data);
@@ -274,6 +287,9 @@ export const api = {
   },
   async getLicenseKeyAnalytics(id:number): Promise<LicenseKeyAnalytics> {
     return httpClient.get<LicenseKeyAnalytics>(`/api/v1/desktop/licenses/${id}/analytics`).then(r => r.data);
+  },
+  async getMarengoAnalytics(): Promise<MarengoAnalytics> {
+    return httpClient.get<MarengoAnalytics>("/api/v1/marengo/analytics", { cache: "no-store" }).then(r => r.data);
   },
   // --------------------------------------------------
   // GET CURRENT USER

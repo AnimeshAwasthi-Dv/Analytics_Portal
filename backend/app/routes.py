@@ -21,6 +21,10 @@ from app.models import (
     TrafficLog,
     LicensePlan,
     DesktopLicense,
+    MarengoStudy,
+    MarengoJob,
+    MarengoReportReview,
+    MarengoUsageLog,
 )
 from app.schemas import (
     LoginRequest,
@@ -42,6 +46,85 @@ from app.auth import (
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+@router.get("/api/v1/marengo/analytics")
+def get_marengo_analytics(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    studies_by_modality = db.query(
+        MarengoStudy.modality,
+        func.count(MarengoStudy.id),
+        func.sum(case((MarengoStudy.status == "SUCCESS", 1), else_=0)),
+        func.sum(case((MarengoStudy.status == "FAILED", 1), else_=0)),
+    ).group_by(MarengoStudy.modality).order_by(MarengoStudy.modality).all()
+    jobs_by_status = db.query(
+        MarengoJob.status,
+        func.count(MarengoJob.id),
+        func.sum(case((MarengoJob.has_error.is_(True), 1), else_=0)),
+        func.sum(func.greatest(MarengoJob.attempts - 1, 0)),
+        func.avg(MarengoJob.latency_ms),
+    ).group_by(MarengoJob.status).order_by(MarengoJob.status).all()
+    jobs_by_modality = db.query(
+        MarengoStudy.modality,
+        MarengoJob.status,
+        func.count(MarengoJob.id),
+        func.sum(case((MarengoJob.has_error.is_(True), 1), else_=0)),
+    ).outerjoin(MarengoStudy, (MarengoJob.instance_code == MarengoStudy.instance_code)
+                & (MarengoJob.study_id == MarengoStudy.id)).group_by(
+        MarengoStudy.modality, MarengoJob.status
+    ).order_by(MarengoStudy.modality, MarengoJob.status).all()
+    average_latency = db.query(func.avg(MarengoJob.latency_ms)).scalar()
+    reviews_by_modality_status = db.query(
+        MarengoReportReview.modality,
+        MarengoReportReview.status,
+        func.count(MarengoReportReview.id),
+    ).group_by(MarengoReportReview.modality, MarengoReportReview.status).order_by(
+        MarengoReportReview.modality, MarengoReportReview.status
+    ).all()
+    usage = db.query(
+        func.count(MarengoUsageLog.id),
+        func.coalesce(func.sum(MarengoUsageLog.credits_used), 0),
+        func.sum(case((MarengoUsageLog.success.is_(True), 1), else_=0)),
+        func.sum(case((MarengoUsageLog.success.is_(False), 1), else_=0)),
+    ).one()
+    return {
+        "studies": {
+            "total": sum(int(row[1] or 0) for row in studies_by_modality),
+            "success": sum(int(row[2] or 0) for row in studies_by_modality),
+            "failed": sum(int(row[3] or 0) for row in studies_by_modality),
+            "byModality": [
+                {"modality": modality, "total": int(total), "success": int(success or 0), "failed": int(failed or 0)}
+                for modality, total, success, failed in studies_by_modality
+            ],
+        },
+        "jobs": {
+            "total": sum(int(row[1] or 0) for row in jobs_by_status),
+            "processingErrors": sum(int(row[2] or 0) for row in jobs_by_status),
+            "retryAttempts": sum(int(row[3] or 0) for row in jobs_by_status),
+            "averageLatencyMs": float(average_latency or 0),
+            "byStatus": [{"status": status_name, "count": int(count), "errors": int(errors or 0)}
+                         for status_name, count, errors, _retries, _latency in jobs_by_status],
+            "byModalityStatus": [
+                {"modality": modality or "Not specified", "status": status_name,
+                 "count": int(count), "errors": int(errors or 0)}
+                for modality, status_name, count, errors in jobs_by_modality
+            ],
+        },
+        "reviews": {
+            "total": sum(int(row[2]) for row in reviews_by_modality_status),
+            "byModalityStatus": [
+                {"modality": modality or "Not specified", "status": review_status, "count": int(count)}
+                for modality, review_status, count in reviews_by_modality_status
+            ],
+            "pushed": sum(int(count) for _modality, review_status, count in reviews_by_modality_status if review_status == "PUSHED"),
+        },
+        "usage": {
+            "entries": int(usage[0] or 0), "creditsUsed": int(usage[1] or 0),
+            "successful": int(usage[2] or 0), "failed": int(usage[3] or 0),
+        },
+    }
 
 
 def serialize_sync_record(record: SyncRecord):
@@ -392,6 +475,59 @@ def get_dashboard(
             modalities_by_instance.setdefault(instance_code, []).append(modality)
             modality_names.add(modality)
 
+    # Marengo analytics are stored in their dedicated tables, not sync_records.
+    # Include study rows in the general dashboard without copying any source PII.
+    marengo_study_rows = db.query(
+        MarengoStudy.instance_code,
+        MarengoStudy.modality,
+        func.count(MarengoStudy.id),
+    ).group_by(MarengoStudy.instance_code, MarengoStudy.modality).all()
+    for instance_code, modality, study_count in marengo_study_rows:
+        previous_records, previous_last_sync, previous_credits = record_stats.get(
+            instance_code, (0, None, 0)
+        )
+        record_stats[instance_code] = (
+            previous_records + int(study_count or 0),
+            previous_last_sync,
+            previous_credits,
+        )
+        if modality:
+            modalities_by_instance.setdefault(instance_code, []).append(modality)
+            modality_names.add(modality)
+
+    marengo_sync_times = dict(
+        db.query(SyncLog.instance_code, func.max(SyncLog.created_at))
+        .filter(
+            SyncLog.event_type == "MARENGO_ANALYTICS_SYNC",
+            SyncLog.status == "SUCCESS",
+        )
+        .group_by(SyncLog.instance_code)
+        .all()
+    )
+    for instance_code, synced_at in marengo_sync_times.items():
+        previous_records, previous_last_sync, previous_credits = record_stats.get(
+            instance_code, (0, None, 0)
+        )
+        record_stats[instance_code] = (
+            previous_records,
+            max((value for value in (previous_last_sync, synced_at) if value), default=None),
+            previous_credits,
+        )
+
+    marengo_credit_rows = db.query(
+        MarengoUsageLog.instance_code,
+        func.coalesce(func.sum(MarengoUsageLog.credits_used), 0),
+    ).group_by(MarengoUsageLog.instance_code).all()
+    for instance_code, credits in marengo_credit_rows:
+        previous_records, previous_last_sync, previous_credits = record_stats.get(
+            instance_code, (0, None, 0)
+        )
+        record_stats[instance_code] = (
+            previous_records,
+            previous_last_sync,
+            previous_credits + int(credits or 0),
+        )
+
     heartbeat_rows = (
         db.query(Instance.identifier, Instance.last_seen_at)
         .filter(Instance.identifier.in_([name for (name,) in api_keys]))
@@ -410,7 +546,9 @@ def get_dashboard(
             func.sum(case((SyncLog.status == "SUCCESS", 1), else_=0)),
             func.sum(case((SyncLog.status == "FAILED", 1), else_=0)),
         )
-        .filter(SyncLog.event_type.in_(("SYNC", "DIRECT_DB_SYNC")))
+        .filter(SyncLog.event_type.in_(
+            ("SYNC", "DIRECT_DB_SYNC", "MARENGO_ANALYTICS_SYNC")
+        ))
         .group_by(SyncLog.instance_code)
         .all()
     }
@@ -433,6 +571,12 @@ def get_dashboard(
 
         records_synced, last_sync, _ = record_stats.get(
             instance_code, (0, None, 0)
+        )
+        # Marengo reconciliation logs are the actual import heartbeat. They also
+        # provide the dashboard's last-sync value for the dedicated Marengo tables.
+        last_sync = max(
+            (value for value in (last_sync, marengo_sync_times.get(instance_code)) if value),
+            default=None,
         )
 
         # Fall back to sync activity until an instance has reported a heartbeat.
@@ -462,7 +606,7 @@ def get_dashboard(
                 "recordsSynced": records_synced,
                 "successRate": success_rate,
                 "failedSyncs": failed_syncs,
-                "modalities": sorted(modalities_by_instance.get(instance_code, [])),
+                "modalities": sorted(set(modalities_by_instance.get(instance_code, []))),
             }
         )
 
@@ -492,6 +636,31 @@ def get_dashboard(
         .limit(50)
         .all()
     )
+    recent_marengo_studies = (
+        db.query(MarengoStudy)
+        .order_by(MarengoStudy.created_at.desc(), MarengoStudy.id.desc())
+        .limit(50)
+        .all()
+    )
+    recent_rows = [serialize_sync_record(record) for record in recent_records]
+    for study in recent_marengo_studies:
+        sync_time = marengo_sync_times.get(study.instance_code)
+        recent_rows.append({
+            "id": f"marengo:{study.instance_code}:{study.id}",
+            "instanceCode": study.instance_code,
+            "modality": study.modality,
+            "studyDescription": None,
+            "processingCreatedAt": study.created_at.isoformat() if study.created_at else None,
+            "processingCompletedAt": None,
+            "creditsUsed": 0,
+            "syncStatus": "SYNCED",
+            "syncedAt": sync_time.isoformat() if sync_time else None,
+        })
+    recent_rows.sort(
+        key=lambda row: as_utc(datetime.fromisoformat(row["syncedAt"]))
+        if row.get("syncedAt") else datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
 
     return {
         "kpis": {
@@ -503,7 +672,7 @@ def get_dashboard(
             "modalityCount": modality_count,
         },
         "instances": instances,
-        "recentRecords": [serialize_sync_record(record) for record in recent_records],
+        "recentRecords": recent_rows[:50],
         "lastUpdated": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -573,6 +742,88 @@ def get_analytics(
         .all()
     )
 
+    # Add analytics-safe Marengo studies to the shared Sync Analytics view.
+    # The Marengo importer deliberately does not create duplicate SyncRecord rows.
+    by_instance_modality: dict[tuple[str, str | None], dict[str, Any]] = {}
+    for instance_code, modality, records, credits in instance_rows:
+        item = by_instance_modality.setdefault(
+            (instance_code, modality),
+            {"instanceCode": instance_code, "modality": modality, "records": 0, "credits": 0},
+        )
+        item["records"] += int(records or 0)
+        item["credits"] += int(credits or 0)
+    marengo_instance_rows = db.query(
+        MarengoStudy.instance_code,
+        MarengoStudy.modality,
+        func.count(MarengoStudy.id),
+    ).group_by(MarengoStudy.instance_code, MarengoStudy.modality).all()
+    for instance_code, modality, records in marengo_instance_rows:
+        item = by_instance_modality.setdefault(
+            (instance_code, modality),
+            {"instanceCode": instance_code, "modality": modality, "records": 0, "credits": 0},
+        )
+        item["records"] += int(records or 0)
+    instance_rows = [
+        (item["instanceCode"], item["modality"], item["records"], item["credits"])
+        for item in by_instance_modality.values()
+    ]
+
+    daily_totals_by_key: dict[tuple[str, str, str | None], dict[str, Any]] = {}
+    for day, instance_code, modality, records, credits in daily_rows:
+        if day is None:
+            continue
+        day_text = day.isoformat() if hasattr(day, "isoformat") else str(day)
+        item = daily_totals_by_key.setdefault(
+            (day_text, instance_code, modality),
+            {"date": day_text, "instanceCode": instance_code, "modality": modality,
+             "records": 0, "credits": 0},
+        )
+        item["records"] += int(records or 0)
+        item["credits"] += int(credits or 0)
+    marengo_daily_studies = db.query(
+        func.date(MarengoStudy.created_at),
+        MarengoStudy.instance_code,
+        MarengoStudy.modality,
+        func.count(MarengoStudy.id),
+    ).group_by(
+        func.date(MarengoStudy.created_at),
+        MarengoStudy.instance_code,
+        MarengoStudy.modality,
+    ).all()
+    for day, instance_code, modality, records in marengo_daily_studies:
+        if day is None:
+            continue
+        day_text = day.isoformat() if hasattr(day, "isoformat") else str(day)
+        item = daily_totals_by_key.setdefault(
+            (day_text, instance_code, modality),
+            {"date": day_text, "instanceCode": instance_code, "modality": modality,
+             "records": 0, "credits": 0},
+        )
+        item["records"] += int(records or 0)
+
+    description_totals_by_key: dict[tuple[str, str, str | None, str | None], dict[str, Any]] = {}
+    for day, instance_code, modality, description, records, credits in description_rows:
+        if day is None:
+            continue
+        day_text = day.isoformat() if hasattr(day, "isoformat") else str(day)
+        item = description_totals_by_key.setdefault(
+            (day_text, instance_code, modality, description),
+            {"date": day_text, "instanceCode": instance_code, "modality": modality,
+             "studyDescription": description, "records": 0, "credits": 0},
+        )
+        item["records"] += int(records or 0)
+        item["credits"] += int(credits or 0)
+    for day, instance_code, modality, records in marengo_daily_studies:
+        if day is None:
+            continue
+        day_text = day.isoformat() if hasattr(day, "isoformat") else str(day)
+        item = description_totals_by_key.setdefault(
+            (day_text, instance_code, modality, None),
+            {"date": day_text, "instanceCode": instance_code, "modality": modality,
+             "studyDescription": None, "records": 0, "credits": 0},
+        )
+        item["records"] += int(records or 0)
+
     modality_totals: dict[str | None, tuple[int, int]] = {}
     source_instances: set[str] = set()
     for instance_code, modality, records, credits in instance_rows:
@@ -622,27 +873,13 @@ def get_analytics(
             modality_names.values(), key=str.casefold
         ),
         "daily": [
-            {
-                "date": day.isoformat() if hasattr(day, "isoformat") else str(day),
-                "instanceCode": instance_code,
-                "modality": modality or "Not specified",
-                "records": records,
-                "credits": credits,
-            }
-            for day, instance_code, modality, records, credits in daily_rows
-            if day is not None
+            {**row, "modality": row["modality"] or "Not specified"}
+            for row in sorted(daily_totals_by_key.values(), key=lambda item: (item["date"], item["instanceCode"]))
         ],
         "byDescription": [
-            {
-                "date": day.isoformat() if hasattr(day, "isoformat") else str(day),
-                "instanceCode": instance_code,
-                "modality": modality or "Not specified",
-                "studyDescription": description,
-                "records": records,
-                "credits": credits,
-            }
-            for day, instance_code, modality, description, records, credits in description_rows
-            if day is not None
+            {**row, "modality": row["modality"] or "Not specified"}
+            for row in sorted(description_totals_by_key.values(),
+                              key=lambda item: (item["date"], item["instanceCode"], item["studyDescription"] or ""))
         ],
         "byInstance": [
             {
@@ -878,6 +1115,129 @@ def get_traffic_summary(
         .order_by(source_day_expression, SyncRecord.instance_code)
         .all()
     )
+
+    # Marengo's normalized analytics tables are the source of truth for its
+    # studies and usage. Keep these as source activity; they are not HTTP hits.
+    marengo_study_instance_rows = (
+        db.query(
+            MarengoStudy.instance_code.label("instance_code"),
+            func.coalesce(Instance.name, MarengoStudy.instance_code).label("name"),
+            func.count(MarengoStudy.id).label("studies"),
+        )
+        .outerjoin(Instance, Instance.identifier == MarengoStudy.instance_code)
+        .filter(
+            MarengoStudy.created_at >= start.replace(tzinfo=None),
+            MarengoStudy.created_at < end.replace(tzinfo=None),
+        )
+        .group_by(MarengoStudy.instance_code, Instance.name)
+        .all()
+    )
+    marengo_usage_instance_rows = (
+        db.query(
+            MarengoUsageLog.instance_code,
+            func.coalesce(func.sum(MarengoUsageLog.credits_used), 0),
+        )
+        .filter(
+            MarengoUsageLog.created_at >= start.replace(tzinfo=None),
+            MarengoUsageLog.created_at < end.replace(tzinfo=None),
+        )
+        .group_by(MarengoUsageLog.instance_code)
+        .all()
+    )
+    marengo_last_sync_rows = (
+        db.query(SyncLog.instance_code, func.max(SyncLog.created_at))
+        .filter(
+            SyncLog.event_type == "MARENGO_ANALYTICS_SYNC",
+            SyncLog.status == "SUCCESS",
+            SyncLog.created_at >= start,
+            SyncLog.created_at < end,
+        )
+        .group_by(SyncLog.instance_code)
+        .all()
+    )
+    source_activity_by_instance: dict[str, dict[str, Any]] = {}
+    for row in source_instance_rows:
+        source_activity_by_instance[row.instance_code] = {
+            "instance": row.instance_code,
+            "name": row.name,
+            "studies": int(row.studies or 0),
+            "creditsUsed": int(row.credits or 0),
+            "lastSync": row.last_sync,
+        }
+    for row in marengo_study_instance_rows:
+        item = source_activity_by_instance.setdefault(
+            row.instance_code,
+            {"instance": row.instance_code, "name": row.name, "studies": 0,
+             "creditsUsed": 0, "lastSync": None},
+        )
+        item["studies"] += int(row.studies or 0)
+    for instance_code, credits in marengo_usage_instance_rows:
+        item = source_activity_by_instance.setdefault(
+            instance_code,
+            {"instance": instance_code, "name": instance_code, "studies": 0,
+             "creditsUsed": 0, "lastSync": None},
+        )
+        item["creditsUsed"] += int(credits or 0)
+    for instance_code, synced_at in marengo_last_sync_rows:
+        item = source_activity_by_instance.get(instance_code)
+        if item is not None and synced_at is not None:
+            item["lastSync"] = max(
+                (value for value in (item["lastSync"], synced_at) if value),
+                default=None,
+            )
+
+    source_daily_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in source_daily_rows:
+        if row.day is None:
+            continue
+        day = row.day.isoformat() if hasattr(row.day, "isoformat") else str(row.day)
+        source_daily_by_key[(day, row.instance_code)] = {
+            "date": day,
+            "instance": row.instance_code,
+            "studies": int(row.studies or 0),
+            "creditsUsed": int(row.credits or 0),
+        }
+    marengo_study_daily_rows = (
+        db.query(
+            func.date(MarengoStudy.created_at).label("day"),
+            MarengoStudy.instance_code,
+            func.count(MarengoStudy.id),
+        )
+        .filter(
+            MarengoStudy.created_at >= start.replace(tzinfo=None),
+            MarengoStudy.created_at < end.replace(tzinfo=None),
+        )
+        .group_by(func.date(MarengoStudy.created_at), MarengoStudy.instance_code)
+        .all()
+    )
+    for day, instance_code, studies in marengo_study_daily_rows:
+        day_text = day.isoformat() if hasattr(day, "isoformat") else str(day)
+        item = source_daily_by_key.setdefault(
+            (day_text, instance_code),
+            {"date": day_text, "instance": instance_code, "studies": 0, "creditsUsed": 0},
+        )
+        item["studies"] += int(studies or 0)
+    marengo_usage_daily_rows = (
+        db.query(
+            func.date(MarengoUsageLog.created_at).label("day"),
+            MarengoUsageLog.instance_code,
+            func.coalesce(func.sum(MarengoUsageLog.credits_used), 0),
+        )
+        .filter(
+            MarengoUsageLog.created_at >= start.replace(tzinfo=None),
+            MarengoUsageLog.created_at < end.replace(tzinfo=None),
+        )
+        .group_by(func.date(MarengoUsageLog.created_at), MarengoUsageLog.instance_code)
+        .all()
+    )
+    for day, instance_code, credits in marengo_usage_daily_rows:
+        day_text = day.isoformat() if hasattr(day, "isoformat") else str(day)
+        item = source_daily_by_key.setdefault(
+            (day_text, instance_code),
+            {"date": day_text, "instance": instance_code, "studies": 0, "creditsUsed": 0},
+        )
+        item["creditsUsed"] += int(credits or 0)
+
     highest = max(instances, key=lambda item: item["totalDataBytes"], default=None)
     return {
         "period": period,
@@ -936,35 +1296,27 @@ def get_traffic_summary(
         ],
         "instances": instances,
         "sourceActivity": {
-            "totalStudies": sum(int(row.studies or 0) for row in source_instance_rows),
-            "creditsUsed": sum(int(row.credits or 0) for row in source_instance_rows),
-            "activeInstances": len(source_instance_rows),
+            "totalStudies": sum(item["studies"] for item in source_activity_by_instance.values()),
+            "creditsUsed": sum(item["creditsUsed"] for item in source_activity_by_instance.values()),
+            "activeInstances": sum(
+                1 for item in source_activity_by_instance.values()
+                if item["studies"] or item["creditsUsed"]
+            ),
             "lastSync": max(
-                (row.last_sync for row in source_instance_rows if row.last_sync),
+                (item["lastSync"] for item in source_activity_by_instance.values() if item["lastSync"]),
                 default=None,
             ).isoformat()
-            if any(row.last_sync for row in source_instance_rows)
+            if any(item["lastSync"] for item in source_activity_by_instance.values())
             else None,
             "instances": [
                 {
-                    "instance": row.instance_code,
-                    "name": row.name,
-                    "studies": int(row.studies or 0),
-                    "creditsUsed": int(row.credits or 0),
-                    "lastSync": row.last_sync.isoformat() if row.last_sync else None,
+                    **item,
+                    "lastSync": item["lastSync"].isoformat() if item["lastSync"] else None,
                 }
-                for row in source_instance_rows
+                for item in source_activity_by_instance.values()
+                if item["studies"] or item["creditsUsed"]
             ],
-            "daily": [
-                {
-                    "date": row.day.isoformat() if hasattr(row.day, "isoformat") else str(row.day),
-                    "instance": row.instance_code,
-                    "studies": int(row.studies or 0),
-                    "creditsUsed": int(row.credits or 0),
-                }
-                for row in source_daily_rows
-                if row.day is not None
-            ],
+            "daily": sorted(source_daily_by_key.values(), key=lambda item: (item["date"], item["instance"])),
         },
     }
 
@@ -1307,8 +1659,8 @@ def _serialize_license(item: DesktopLicense, plan: LicensePlan):
 
 
 @router.get("/api/v1/desktop/plans")
-def list_license_plans(service: str | None = None, db: Session = Depends(get_db),
-                       current_user: User = Depends(get_current_user)):
+def list_license_plans(service: str | None = None, page: int | None = None, page_size: int = 50,
+                       db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     query = db.query(LicensePlan)
     if service:
         normalized_service = _license_service(service)
@@ -1318,7 +1670,15 @@ def list_license_plans(service: str | None = None, db: Session = Depends(get_db)
             # already treats NULL as XRAY.
             service_filter = service_filter | LicensePlan.test_type_id.is_(None)
         query = query.filter(service_filter)
-    return {"items": [_serialize_plan(p) for p in query.order_by(LicensePlan.test_type_id, LicensePlan.plan_name).all()]}
+    query = query.order_by(LicensePlan.test_type_id, LicensePlan.plan_name)
+    if page is not None:
+        page = max(page, 1)
+        page_size = min(max(page_size, 1), 200)
+        total = query.order_by(None).count()
+        plans = query.offset((page - 1) * page_size).limit(page_size).all()
+        return {"items": [_serialize_plan(p) for p in plans], "total": total, "page": page,
+                "pageSize": page_size, "totalPages": (total + page_size - 1) // page_size}
+    return {"items": [_serialize_plan(p) for p in query.all()]}
 
 
 @router.post("/api/v1/desktop/plans", status_code=status.HTTP_201_CREATED)
@@ -1390,7 +1750,8 @@ def _new_license(db: Session, plan: LicensePlan, service: str, platform: str, **
 
 @router.get("/api/v1/desktop/licenses")
 def list_desktop_licenses(service: str | None = None, search: str | None = None,
-                          status_filter: str | None = None, db: Session = Depends(get_db),
+                          status_filter: str | None = None, page: int | None = None, page_size: int = 50,
+                          db: Session = Depends(get_db),
                           current_user: User = Depends(get_current_user)):
     query = db.query(DesktopLicense, LicensePlan).join(LicensePlan, DesktopLicense.plan_id == LicensePlan.plan_id)
     if service:
@@ -1401,7 +1762,15 @@ def list_desktop_licenses(service: str | None = None, search: str | None = None,
         term = f"%{search.strip()}%"
         query = query.filter((DesktopLicense.license_key.ilike(term)) | (DesktopLicense.fullname.ilike(term)) |
                              (DesktopLicense.username.ilike(term)) | (DesktopLicense.mobile.ilike(term)))
-    rows = query.order_by(DesktopLicense.license_id.desc()).limit(1000).all()
+    query = query.order_by(DesktopLicense.license_id.desc())
+    if page is not None:
+        page = max(page, 1)
+        page_size = min(max(page_size, 1), 200)
+        total = query.order_by(None).count()
+        rows = query.offset((page - 1) * page_size).limit(page_size).all()
+        return {"items": [_serialize_license(item, plan) for item, plan in rows], "total": total,
+                "page": page, "pageSize": page_size, "totalPages": (total + page_size - 1) // page_size}
+    rows = query.limit(1000).all()
     return {"items": [_serialize_license(item, plan) for item, plan in rows]}
 
 

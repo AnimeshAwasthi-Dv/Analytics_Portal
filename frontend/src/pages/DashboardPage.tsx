@@ -358,6 +358,13 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 Analytics
               </Link>
 
+              <Link
+                to="/marengo-analytics"
+                className="dashboard-action dashboard-analytics flex items-center gap-2 rounded-lg border border-slate-300 bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200"
+              >
+                Marengo Analytics
+              </Link>
+
               {onLogout && (
                 <button
                   onClick={onLogout}
@@ -462,7 +469,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               </p>
 
               <p className="text-[11px] text-slate-400 mt-1">
-                DecXpert sync records
+                Synced records across configured sources
               </p>
             </div>
           </div>
@@ -702,7 +709,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           <tr>
             <td
               className="px-4 py-8 text-center text-slate-400"
-              colSpan={8}
+              colSpan={9}
             >
               No synchronized records have been saved.
             </td>

@@ -20,8 +20,7 @@ from sqlalchemy.engine import Engine, make_url
 
 from app.database import SessionLocal
 from app.models import Instance, SyncLog, SyncRecord
-from app.license_live_sync import install_configured_source_triggers, listen_license
-
+from app.marengo_analytics_sync import import_marengo_source, verify_source_schema
 load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger("portal-source-sync")
@@ -44,34 +43,6 @@ class Source:
 
 
 SOURCE_SQL = {
-    "marengo": text('''
-        SELECT s.id AS source_id, s.modality AS modality,
-               pj.processing_created_at, pj.processing_completed_at,
-               pj.image_count, pj.service_type,
-               abs."studyDescription" AS study_description
-        FROM public.studies AS s
-        LEFT JOIN LATERAL (
-            SELECT p."createdAt" AS processing_created_at,
-                   p."completedAt" AS processing_completed_at,
-                   p."imageCount" AS image_count,
-                   p."serviceType" AS service_type, p.id
-            FROM public.processing_jobs AS p
-            WHERE p."internalJobId" = s.id
-            ORDER BY p."createdAt" DESC NULLS LAST, p.id DESC
-            LIMIT 1
-        ) AS pj ON TRUE
-        LEFT JOIN LATERAL (
-            SELECT b."studyDescription"
-            FROM public.available_bridge_studies AS b
-            WHERE b."processingJobId" = pj.id
-            ORDER BY b.id DESC
-            LIMIT 1
-        ) AS abs ON TRUE
-        WHERE UPPER(BTRIM(s.status)) = 'SUCCESS'
-          AND (CAST(:source_id AS BIGINT) IS NULL OR s.id = CAST(:source_id AS BIGINT))
-        ORDER BY s.id
-        LIMIT :limit OFFSET :offset
-    '''),
     "pacs": text('''
         SELECT pj.id AS source_id,
                COALESCE(abs.modalities[1], pj."serviceType") AS modality,
@@ -118,6 +89,9 @@ NOTIFY_CHANNEL = "portal_sync_events"
 
 def install_source_trigger(source: Source) -> None:
     """Install a small status-transition trigger in one configured source DB."""
+    if source.profile == "marengo":
+        install_marengo_source_triggers(source)
+        return
     table = SOURCE_TRIGGER_TABLES[source.profile]
     engine = create_engine(source.database_url, pool_pre_ping=True)
     try:
@@ -162,11 +136,39 @@ def install_source_trigger(source: Source) -> None:
         engine.dispose()
 
 
+def install_marengo_source_triggers(source: Source) -> None:
+    """Notify the Marengo listener when any analytics row is inserted or updated."""
+    from app.marengo_analytics_sync import SOURCE_TABLES
+
+    engine = create_engine(source.database_url, pool_pre_ping=True)
+    try:
+        verify_source_schema(engine)
+        with engine.begin() as connection:
+            connection.execute(text(f"""
+                CREATE OR REPLACE FUNCTION public.portal_sync_notify_marengo_analytics()
+                RETURNS trigger
+                LANGUAGE plpgsql
+                AS $$
+                BEGIN
+                    PERFORM pg_notify('{NOTIFY_CHANNEL}', TG_TABLE_NAME || ':' || NEW.id::text);
+                    RETURN NEW;
+                END;
+                $$;
+            """))
+            for table_name in SOURCE_TABLES:
+                connection.execute(text(f"DROP TRIGGER IF EXISTS portal_sync_notify_analytics ON public.{table_name}"))
+                connection.execute(text(f"""
+                    CREATE TRIGGER portal_sync_notify_analytics
+                    AFTER INSERT OR UPDATE ON public.{table_name}
+                    FOR EACH ROW EXECUTE FUNCTION public.portal_sync_notify_marengo_analytics()
+                """))
+        logger.info("Installed analytics notification triggers for %s", source.name)
+    finally:
+        engine.dispose()
+
+
 def install_source_triggers(source_filter: str | None = None) -> bool:
-    license_url_configured = bool(os.getenv("SOURCE_LICENSE_DATABASE_URL", "").strip())
-    sources = load_sources(
-        allow_empty=license_url_configured and source_filter is None,
-    )
+    sources = load_sources()
     if source_filter:
         sources = [source for source in sources if source.name.casefold() == source_filter.casefold()
                    or source.instance_code.casefold() == source_filter.casefold()]
@@ -179,12 +181,6 @@ def install_source_triggers(source_filter: str | None = None) -> bool:
         except Exception as exc:
             failed = True
             logger.error("Could not install trigger for %s: %s", source.name, exc)
-    try:
-        install_configured_source_triggers()
-        logger.info("Installed license change triggers for Validation Portal")
-    except Exception as exc:
-        failed = True
-        logger.error("Could not install license change triggers: %s", exc)
     return not failed
 
 
@@ -224,7 +220,7 @@ def load_sources(*, allow_empty: bool = False) -> list[Source]:
         profile = str(item.get("profile", "")).strip().lower()
         instance_code = str(item.get("instance_code", "")).strip()
         database_url = str(item.get("database_url", "")).strip()
-        if profile not in SOURCE_SQL:
+        if profile not in {"marengo", "pacs", "api_control"}:
             raise RuntimeError(f"Unsupported source profile for {name or 'unnamed source'}; use marengo, pacs, or api_control.")
         if not name or not instance_code or len(instance_code) > 50 or not database_url:
             raise RuntimeError("Each source must define name, instance_code (1-50 chars), and database_url.")
@@ -256,7 +252,9 @@ def make_payload(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def import_source(source: Source, batch_size: int, dry_run: bool = False,
-                  only_source_id: int | None = None) -> dict[str, int]:
+                  only_source_id: int | str | None = None) -> dict[str, int]:
+    if source.profile == "marengo":
+        return import_marengo_source(source, batch_size, dry_run, str(only_source_id) if only_source_id is not None else None)
     source_engine: Engine = create_engine(source.database_url, pool_pre_ping=True, pool_recycle=300)
     portal_db = SessionLocal()
     offset = 0
@@ -391,11 +389,17 @@ def _listen_to_source(source: Source, batch_size: int, stop_event: threading.Eve
 
                 while not stop_event.is_set():
                     for notification in connection.notifies(timeout=10, stop_after=1):
-                        try:
-                            source_id = int(notification.payload)
-                        except (TypeError, ValueError):
-                            logger.warning("Ignoring invalid notification from %s", source.name)
-                            continue
+                        if source.profile == "marengo":
+                            source_id = str(notification.payload)
+                            if ":" not in source_id:
+                                logger.warning("Ignoring invalid Marengo analytics notification")
+                                continue
+                        else:
+                            try:
+                                source_id = int(notification.payload)
+                            except (TypeError, ValueError):
+                                logger.warning("Ignoring invalid notification from %s", source.name)
+                                continue
                         stats = import_source(source, batch_size, dry_run=dry_run, only_source_id=source_id)
                         logger.info("Notification handled for %s record=%s stats=%s", source.name, source_id, stats)
         except KeyboardInterrupt:
@@ -407,37 +411,27 @@ def _listen_to_source(source: Source, batch_size: int, stop_event: threading.Eve
             stop_event.wait(5)
 
 
-def listen_sources(source_filter: str | None = None, dry_run: bool = False) -> None:
-    license_url_configured = bool(os.getenv("SOURCE_LICENSE_DATABASE_URL", "").strip())
-    if license_url_configured and dry_run:
-        logger.warning("License live sync is disabled in --dry-run mode")
-        license_url_configured = False
-    sources = load_sources(allow_empty=license_url_configured and source_filter is None)
+def listen_sources(source_filter: str | None = None, dry_run: bool = False,
+                   stop_event: threading.Event | None = None) -> None:
+    sources = load_sources()
     if source_filter:
         sources = [source for source in sources if source.name.casefold() == source_filter.casefold()
                    or source.instance_code.casefold() == source_filter.casefold()]
         if not sources:
             raise RuntimeError(f"No configured source matches {source_filter!r}.")
     batch_size = max(1, int(os.getenv("SOURCE_SYNC_BATCH_SIZE", "500")))
-    logger.info(
-        "Starting listeners for %s portal source(s)%s",
-        len(sources), ", plus Validation Portal licenses" if license_url_configured else "",
-    )
-    if not license_url_configured:
-        logger.warning("Validation Portal license listener is not configured; set SOURCE_LICENSE_DATABASE_URL to include it")
-    stop_event = threading.Event()
+    logger.info("Starting listeners for %s portal source(s)", len(sources))
+    if stop_event is None:
+        stop_event = threading.Event()
     try:
-        worker_count = len(sources) + int(license_url_configured)
-        with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="source-listener") as pool:
+        with ThreadPoolExecutor(max_workers=len(sources), thread_name_prefix="source-listener") as pool:
             futures = [pool.submit(_listen_to_source, source, batch_size, stop_event, dry_run) for source in sources]
-            if license_url_configured:
-                futures.append(pool.submit(listen_license, stop_event))
             try:
                 done, _ = wait(futures, return_when=FIRST_EXCEPTION)
                 for future in done:
                     future.result()
             except KeyboardInterrupt:
-                logger.info("Stopping source and license listeners")
+                logger.info("Stopping source listeners")
                 stop_event.set()
             except BaseException:
                 stop_event.set()
@@ -448,11 +442,11 @@ def listen_sources(source_filter: str | None = None, dry_run: bool = False) -> N
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Import successful studies directly from portal PostgreSQL databases.")
+    parser = argparse.ArgumentParser(description="Sync Marengo analytics and successful PACS/API Control studies from source PostgreSQL databases.")
     parser.add_argument("--source", help="Only import the named source or instance_code.")
     parser.add_argument("--dry-run", action="store_true", help="Read source rows and count candidates without writing to the portal DB.")
-    parser.add_argument("--install-triggers", action="store_true", help="Install SUCCESS triggers for configured portals and change triggers for the Validation Portal license tables.")
-    parser.add_argument("--listen", action="store_true", help="Listen to configured Marengo, PACS, API Control, and (when configured) Validation Portal license databases together.")
+    parser.add_argument("--install-triggers", action="store_true", help="Install source-specific triggers for configured Marengo, PACS, or API Control databases.")
+    parser.add_argument("--listen", action="store_true", help="Listen to configured Marengo, PACS, and API Control databases.")
     parser.add_argument("--watch", action="store_true", help="Deprecated alias for --listen.")
     args = parser.parse_args()
     if args.install_triggers:
