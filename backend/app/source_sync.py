@@ -19,20 +19,12 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine, make_url
 
 from app.database import SessionLocal
+from app.modality import normalize_modality
 from app.models import Instance, SyncLog, SyncRecord
 from app.marengo_analytics_sync import import_marengo_source, verify_source_schema
 load_dotenv()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger("portal-source-sync")
-
-X_RAY_MODALITIES = {"XR", "CR", "CRI", "DX", "MG"}
-X_RAY_KEYWORDS = (
-    "X-RAY", "XRAY", "MAMMO", "MAMMOGRAPHY", "BARIUM SWALLOW", "MCT",
-    "MCU", "URETHROGRAM", "CYSTOURETHROGRAM", "GENITOURETHROGRAM",
-    "BARIUM ENEMA", "FLUORO", "FLUOROSCOPY", "IVU", "CONTRAST SWALLOW",
-    "FISTULOGRAM", "DYE STUDY",
-)
-
 
 @dataclass(frozen=True)
 class Source:
@@ -48,19 +40,21 @@ SOURCE_SQL = {
                COALESCE(abs.modalities[1], pj."serviceType") AS modality,
                pj."createdAt" AS processing_created_at,
                pj."completedAt" AS processing_completed_at,
-               pj."imageCount" AS image_count,
+               abs."instanceCount" AS image_count,
+               abs."studyInstanceUid" AS source_study_uid,
                pj."serviceType" AS service_type,
                COALESCE(abs."studyDescription", pj."uploadName", pj."serviceType") AS study_description
         FROM public.processing_jobs AS pj
         LEFT JOIN LATERAL (
-            SELECT b."studyDescription", b.modalities
+            SELECT b."studyDescription", b.modalities,
+                   b."instanceCount", b."studyInstanceUid"
             FROM public.available_bridge_studies AS b
             WHERE b."processingJobId" = pj.id
             ORDER BY b."updatedAt" DESC NULLS LAST, b."createdAt" DESC NULLS LAST
             LIMIT 1
         ) AS abs ON TRUE
         WHERE UPPER(BTRIM(pj.status)) = 'SUCCESS'
-          AND (CAST(:source_id AS BIGINT) IS NULL OR pj.id = CAST(:source_id AS BIGINT))
+          AND (CAST(:source_id AS TEXT) IS NULL OR pj.id = CAST(:source_id AS TEXT))
         ORDER BY pj.id
         LIMIT :limit OFFSET :offset
     '''),
@@ -131,6 +125,55 @@ def install_source_trigger(source: Source) -> None:
                 FOR EACH ROW
                 EXECUTE FUNCTION public.portal_sync_notify_success()
             """))
+            if source.profile == "pacs":
+                bridge_columns = {
+                    column["name"]
+                    for column in inspect(engine).get_columns(
+                        "available_bridge_studies", schema="public"
+                    )
+                }
+                required_bridge_columns = {
+                    "processingJobId", "instanceCount", "studyInstanceUid",
+                    "modalities", "studyDescription", "updatedAt", "createdAt",
+                }
+                missing_bridge_columns = required_bridge_columns - bridge_columns
+                if missing_bridge_columns:
+                    raise RuntimeError(
+                        "PACS profile expects public.available_bridge_studies columns: "
+                        + ", ".join(sorted(missing_bridge_columns))
+                    )
+                connection.execute(text(f"""
+                    CREATE OR REPLACE FUNCTION public.portal_sync_notify_bridge_success()
+                    RETURNS trigger
+                    LANGUAGE plpgsql
+                    AS $$
+                    BEGIN
+                        IF NEW."processingJobId" IS NOT NULL AND EXISTS (
+                            SELECT 1
+                            FROM public.processing_jobs AS pj
+                            WHERE pj.id = NEW."processingJobId"
+                              AND UPPER(BTRIM(pj.status)) = 'SUCCESS'
+                        ) THEN
+                            PERFORM pg_notify(
+                                '{NOTIFY_CHANNEL}', NEW."processingJobId"::text
+                            );
+                        END IF;
+                        RETURN NEW;
+                    END;
+                    $$;
+                """))
+                connection.execute(text("""
+                    DROP TRIGGER IF EXISTS portal_sync_notify_bridge
+                    ON public.available_bridge_studies
+                """))
+                connection.execute(text("""
+                    CREATE TRIGGER portal_sync_notify_bridge
+                    AFTER INSERT OR UPDATE OF "processingJobId", "instanceCount",
+                        "studyInstanceUid", modalities, "studyDescription"
+                    ON public.available_bridge_studies
+                    FOR EACH ROW
+                    EXECUTE FUNCTION public.portal_sync_notify_bridge_success()
+                """))
         logger.info("Installed SUCCESS notification trigger for %s (%s)", source.name, table)
     finally:
         engine.dispose()
@@ -138,7 +181,7 @@ def install_source_trigger(source: Source) -> None:
 
 def install_marengo_source_triggers(source: Source) -> None:
     """Notify the Marengo listener when any analytics row is inserted or updated."""
-    from app.marengo_analytics_sync import SOURCE_TABLES
+    from app.marengo_analytics_sync import SOURCE_NOTIFICATION_TABLES
 
     engine = create_engine(source.database_url, pool_pre_ping=True)
     try:
@@ -155,7 +198,7 @@ def install_marengo_source_triggers(source: Source) -> None:
                 END;
                 $$;
             """))
-            for table_name in SOURCE_TABLES:
+            for table_name in SOURCE_NOTIFICATION_TABLES:
                 connection.execute(text(f"DROP TRIGGER IF EXISTS portal_sync_notify_analytics ON public.{table_name}"))
                 connection.execute(text(f"""
                     CREATE TRIGGER portal_sync_notify_analytics
@@ -232,18 +275,26 @@ def load_sources(*, allow_empty: bool = False) -> list[Source]:
 
 
 def make_payload(row: dict[str, Any]) -> dict[str, Any]:
-    modality = str(row.get("modality") or row.get("service_type") or "").strip().upper()
+    source_modality = str(row.get("modality") or row.get("service_type") or "").strip().upper()
     description = row.get("study_description") or row.get("service_type")
-    matching_text = f"{description or ''} {row.get('service_type') or ''}".upper()
-    is_xray = modality in X_RAY_MODALITIES or any(word in matching_text for word in X_RAY_KEYWORDS)
-    if is_xray:
-        credits_used = int(row.get("image_count") or 0)
-        if credits_used <= 0:
-            raise ValueError("X-ray image count is missing or zero.")
+    matching_text = f"{source_modality} {description or ''} {row.get('service_type') or ''}".upper()
+    modality = normalize_modality(source_modality, matching_text)
+    if modality in {"X-Ray", "Special X-Ray"}:
+        image_count = row.get("image_count")
+        if type(image_count) is not int or image_count <= 0:
+            logger.warning(
+                "Rejecting X-ray record without a positive "
+                "available_bridge_studies.instanceCount"
+            )
+            raise ValueError(
+                "A positive available_bridge_studies.instanceCount is required "
+                "for X-ray credits."
+            )
+        credits_used = image_count
     else:
         credits_used = 1
     return {
-        "modality": modality or None,
+        "modality": modality,
         "study_description": description,
         "processing_created_at": row.get("processing_created_at"),
         "processing_completed_at": row.get("processing_completed_at"),
@@ -266,13 +317,15 @@ def import_source(source: Source, batch_size: int, dry_run: bool = False,
             portal_db.add(instance)
             portal_db.commit()
 
-        existing_query = portal_db.query(SyncRecord.source_record_id).filter(
+        existing_query = portal_db.query(SyncRecord).filter(
             SyncRecord.instance_code == source.instance_code,
             SyncRecord.source_record_id.isnot(None),
         )
         if only_source_id is not None:
             existing_query = existing_query.filter(SyncRecord.source_record_id == str(only_source_id))
-        existing_ids = {str(value) for (value,) in existing_query.all()}
+        existing_records = {
+            str(record.source_record_id): record for record in existing_query.all()
+        }
 
         while True:
             with source_engine.connect() as connection:
@@ -285,7 +338,8 @@ def import_source(source: Source, batch_size: int, dry_run: bool = False,
             scanned += len(rows)
             for row in rows:
                 record_id = str(row["source_id"])
-                if record_id in existing_ids:
+                if record_id in existing_records:
+                    # Repeated notifications represent the same credit event.
                     skipped += 1
                     continue
                 try:
@@ -294,9 +348,13 @@ def import_source(source: Source, batch_size: int, dry_run: bool = False,
                     rejected += 1
                     logger.warning("Skipping invalid record source=%s record_id=%s", source.name, record_id)
                     continue
+                if normalize_modality(row.get("modality"), row.get("study_description") or row.get("service_type")) is None:
+                    logger.warning(
+                        "Unrecognized modality from source=%s; stored source value and applied the non-X-ray credit rule",
+                        source.name,
+                    )
                 if dry_run:
                     imported += 1
-                    existing_ids.add(record_id)
                     continue
                 portal_db.add(SyncRecord(
                     instance_code=source.instance_code,
@@ -308,7 +366,9 @@ def import_source(source: Source, batch_size: int, dry_run: bool = False,
                     credits_used=payload["credits_used"],
                     sync_status="SYNCED",
                 ))
-                existing_ids.add(record_id)
+                # The key also reserves duplicate rows in the same batch
+                # before the next database commit.
+                existing_records[record_id] = True
                 imported += 1
             if not dry_run:
                 portal_db.commit()
@@ -393,6 +453,11 @@ def _listen_to_source(source: Source, batch_size: int, stop_event: threading.Eve
                             source_id = str(notification.payload)
                             if ":" not in source_id:
                                 logger.warning("Ignoring invalid Marengo analytics notification")
+                                continue
+                        elif source.profile == "pacs":
+                            source_id = str(notification.payload)
+                            if not source_id:
+                                logger.warning("Ignoring empty PACS notification")
                                 continue
                         else:
                             try:

@@ -29,7 +29,7 @@ ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 
 def main(argv: list[str] | None = None) -> int:
-    load_dotenv(dotenv_path=ENV_FILE, override=False)
+    load_dotenv(dotenv_path=ENV_FILE, encoding="utf-8-sig", override=False)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--batch-size", type=int, default=1000)
     parser.add_argument("--dry-run", action="store_true", help="scan and validate without writing central rows")
@@ -54,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
                 source_database = connection.execute(text("SELECT current_database()")).scalar_one()
                 source_counts = {
                     table: connection.execute(text(f'SELECT count(*) FROM public."{table}"')).scalar_one()
-                    for table in ("studies", "jobs", "report_reviews", "usage_logs")
+                    for table in ("studies", "jobs", "report_reviews", "usage_logs", "processing_jobs")
                 }
             with central_engine.connect() as connection:
                 central_database = connection.execute(text("SELECT current_database()")).scalar_one()

@@ -1,10 +1,15 @@
 
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-load_dotenv()
+load_dotenv(
+    dotenv_path=Path(__file__).resolve().parents[1] / ".env",
+    encoding="utf-8-sig",
+    override=False,
+)
 
 db_user = os.getenv("DATABASE_USER")
 db_pass = os.getenv("DATABASE_PASSWORD")

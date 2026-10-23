@@ -30,7 +30,9 @@ Alternatively, set `PORTAL_SOURCE_DATABASES` to a JSON array when you need custo
 
 ## Install source notifications
 
-The worker uses PostgreSQL `LISTEN`/`NOTIFY`; it does not poll every 60 seconds. Install a trigger in each source database. It notifies the worker when a source row is inserted as `SUCCESS` or transitions to `SUCCESS`.
+The worker uses PostgreSQL `LISTEN`/`NOTIFY`; it does not poll every 60 seconds. Install source triggers with the command below. Processing-job notifications carry the source job ID; for PACS, that ID is text. The PACS trigger installer also notifies the same listener when a linked `available_bridge_studies` row is inserted or its count, study UID, modalities, or description changes. This lets an X-ray job rejected for a missing count be retried when bridge metadata arrives.
+
+For PACS X-ray credit calculation, the listener joins `available_bridge_studies."processingJobId"` to `processing_jobs.id` and reads `available_bridge_studies."instanceCount"`. This is the source schema's unique foreign-key relationship. A missing, invalid, or non-positive count rejects the X-ray record without persisting a guessed credit value; non-X-ray records use one credit.
 
 From the `backend` directory, install triggers for every configured source:
 
@@ -63,11 +65,13 @@ python -m app.source_sync --dry-run
 python -m app.source_sync --source Marengo --dry-run
 ```
 
-For a one-time full backfill of all four Marengo analytics tables, run from `backend`:
+For a one-time full backfill of Marengo analytics, run from `backend`. On Windows Git Bash, use forward slashes and the repository virtual-environment interpreter:
 
 ```bash
-python -m app.clone_marengo_db --dry-run --batch-size 1000
-python -m app.clone_marengo_db --batch-size 1000
+cd /d/CDS/backend
+../.venv/Scripts/python.exe -m alembic -c alembic.ini upgrade head
+../.venv/Scripts/python.exe -m app.clone_marengo_db --dry-run --batch-size 1000
+../.venv/Scripts/python.exe -m app.clone_marengo_db --batch-size 1000
 ```
 
 The clone reads only `MARENGO_DATABASE_URL` and writes to `DATABASE_URL`. It is safe to rerun and upserts by source ID plus instance code. It uses the same live-schema validation and analytics-only field mapping as ongoing sync. It does not copy patient identifiers or names, accessions, report JSON, usage messages, or raw job error text.

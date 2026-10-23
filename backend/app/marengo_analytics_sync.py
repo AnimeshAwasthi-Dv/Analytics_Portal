@@ -14,6 +14,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import Engine
 
 from app.database import SessionLocal
+from app.modality import normalize_modality
 from app.models import (
     Instance,
     MarengoJob,
@@ -34,6 +35,7 @@ SOURCE_TABLES = {
     "report_reviews": MarengoReportReview,
     "usage_logs": MarengoUsageLog,
 }
+SOURCE_NOTIFICATION_TABLES = (*SOURCE_TABLES.keys(), "processing_jobs")
 
 # The live schema is checked before any SELECT is run. These expectations come
 # from the supplied schema snapshot and are intentionally independent of the
@@ -75,6 +77,15 @@ SOURCE_COLUMNS: dict[str, dict[str, tuple[str, bool, str | None]]] = {
         "creditsUsed": ("INTEGER", False, None), "success": ("BOOLEAN", False, None),
         "message": ("TEXT", False, None), "createdAt": ("TIMESTAMP", False, "current_timestamp"),
     },
+    # The supplied Marengo schema defines processing_jobs.imageCount as the
+    # count used by its processing pipeline. available_bridge_studies.instanceCount
+    # is a separate field and is intentionally not used as an image count.
+    "processing_jobs": {
+        "id": ("TEXT", False, None), "internalJobId": ("TEXT", True, None),
+        "status": ("TEXT", False, "queued"), "imageCount": ("INTEGER", False, "0"),
+        "completedAt": ("TIMESTAMP", True, None),
+        "updatedAt": ("TIMESTAMP", False, None),
+    },
 }
 
 SOURCE_ENUMS = {
@@ -83,9 +94,43 @@ SOURCE_ENUMS = {
     "ReturnFormat": ("DICOM_ENCAPSULATED_PDF", "DICOM_SECONDARY_CAPTURE", "HL7", "HTML", "PDF", "DOCX"),
 }
 
+STUDY_SELECT_FIELDS = '''
+    SELECT s.id, s.modality, s.status, s."createdAt" AS created_at,
+           latest_usage.service_name AS study_description,
+           COALESCE(processing_job.completed_at, completed_job.completed_at,
+                    usage_summary.usage_completed_at) AS processing_completed_at,
+           processing_job.image_count AS image_count
+    FROM public.studies AS s
+    LEFT JOIN LATERAL (
+        SELECT u."serviceName" AS service_name
+        FROM public.usage_logs AS u
+        WHERE u."studyUid" = s."studyUid"
+        ORDER BY u."createdAt" DESC, u.id DESC
+        LIMIT 1
+    ) AS latest_usage ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT MAX(u."createdAt") AS usage_completed_at
+        FROM public.usage_logs AS u
+        WHERE u."studyUid" = s."studyUid"
+    ) AS usage_summary ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT pj."imageCount" AS image_count, pj."completedAt" AS completed_at
+        FROM public.processing_jobs AS pj
+        WHERE pj."internalJobId" = s.id
+          AND UPPER(BTRIM(pj.status)) = 'SUCCESS'
+        ORDER BY pj."completedAt" DESC NULLS LAST, pj."updatedAt" DESC NULLS LAST, pj.id DESC
+        LIMIT 1
+    ) AS processing_job ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT MAX(j."updatedAt") AS completed_at
+        FROM public.jobs AS j
+        WHERE j."studyId" = s.id AND j.status IN ('SUCCESS', 'FAILED')
+    ) AS completed_job ON TRUE
+'''
+
 SOURCE_SELECTS = {
-    "studies": text('''SELECT id, modality, status, "createdAt" AS created_at
-                       FROM public.studies WHERE id > :after_id ORDER BY id LIMIT :limit'''),
+    "studies": text(STUDY_SELECT_FIELDS + '''
+                       WHERE s.id > :after_id ORDER BY s.id LIMIT :limit'''),
     "jobs": text('''SELECT id, "studyId" AS study_id, "serviceName" AS service_name, status,
                            attempts, (error IS NOT NULL AND BTRIM(error) <> '') AS has_error,
                            "latencyMs" AS latency_ms, "createdAt" AS created_at, "updatedAt" AS updated_at
@@ -96,14 +141,17 @@ SOURCE_SELECTS = {
                                     "reviewedAt" AS reviewed_at, "approvedAt" AS approved_at,
                                     "createdAt" AS created_at, "updatedAt" AS updated_at
                              FROM public.report_reviews WHERE id > :after_id ORDER BY id LIMIT :limit'''),
-    "usage_logs": text('''SELECT id, "serviceName" AS service_name, "creditsUsed" AS credits_used,
+    "usage_logs": text('''SELECT id, "serviceName" AS service_name, "studyUid" AS study_uid,
+                                "creditsUsed" AS credits_used,
                                 success, "createdAt" AS created_at
                          FROM public.usage_logs WHERE id > :after_id ORDER BY id LIMIT :limit'''),
 }
 
+PROCESSING_JOB_LOOKUP = text('''SELECT id, "internalJobId" AS study_id
+                                FROM public.processing_jobs WHERE id = :source_id''')
+
 SOURCE_LOOKUPS = {
-    "studies": text('''SELECT id, modality, status, "createdAt" AS created_at
-                       FROM public.studies WHERE id = :source_id'''),
+    "studies": text(STUDY_SELECT_FIELDS + '''WHERE s.id = :source_id'''),
     "jobs": text('''SELECT id, "studyId" AS study_id, "serviceName" AS service_name, status,
                            attempts, (error IS NOT NULL AND BTRIM(error) <> '') AS has_error,
                            "latencyMs" AS latency_ms, "createdAt" AS created_at, "updatedAt" AS updated_at
@@ -114,10 +162,14 @@ SOURCE_LOOKUPS = {
                                     "reviewedAt" AS reviewed_at, "approvedAt" AS approved_at,
                                     "createdAt" AS created_at, "updatedAt" AS updated_at
                              FROM public.report_reviews WHERE id = :source_id'''),
-    "usage_logs": text('''SELECT id, "serviceName" AS service_name, "creditsUsed" AS credits_used,
+    "usage_logs": text('''SELECT id, "serviceName" AS service_name, "studyUid" AS study_uid,
+                                "creditsUsed" AS credits_used,
                                 success, "createdAt" AS created_at
                          FROM public.usage_logs WHERE id = :source_id'''),
 }
+
+STUDY_LOOKUP_BY_UID = text(STUDY_SELECT_FIELDS + '''WHERE s."studyUid" = :study_uid''')
+STUDY_LOOKUP_BY_ID = text(STUDY_SELECT_FIELDS + '''WHERE s.id = :study_id''')
 
 
 def _normalize_default(value: Any) -> str | None:
@@ -172,8 +224,41 @@ def verify_source_schema(engine: Engine) -> None:
 
 
 def _record_values(table: str, row: dict[str, Any]) -> dict[str, Any]:
+    if table == "studies":
+        modality = normalize_modality(row.get("modality"), row.get("study_description"))
+        if modality is None:
+            logger.warning(
+                "Unrecognized Marengo modality for source study id=%s; preserving source label and applying the non-X-ray credit rule",
+                row.get("id"),
+            )
+        credits_used = 1
+        if modality in {"X-Ray", "Special X-Ray"}:
+            try:
+                image_count = int(row.get("image_count") or 0)
+            except (TypeError, ValueError):
+                image_count = 0
+            if image_count > 0:
+                credits_used = image_count
+            else:
+                credits_used = 0
+                logger.warning(
+                    "Marengo X-ray study has no valid processing_jobs.imageCount; recording zero credits for source study id=%s",
+                    row.get("id"),
+                )
+        return {
+            **{key: value for key, value in row.items() if key != "image_count"},
+            "modality": modality,
+            "credits_used": credits_used,
+        }
     if table == "jobs":
         return {**row, "has_error": bool(row["has_error"])}
+    if table == "report_reviews":
+        return {
+            **row,
+            "modality": normalize_modality(row.get("modality"), row.get("service_name")),
+        }
+    if table == "usage_logs":
+        return {key: value for key, value in row.items() if key != "study_uid"}
     return row
 
 
@@ -182,7 +267,15 @@ def _upsert_batch(session, instance_code: str, table: str, rows: list[dict[str, 
         return
     model = SOURCE_TABLES[table]
     values = [{**_record_values(table, row), "instance_code": instance_code} for row in rows]
-    update_columns = [column.name for column in model.__table__.columns if column.name != "id"]
+    immutable_columns = {"id"}
+    if table == "studies":
+        # Study credits are a calculated event value. A repeat clone/listener
+        # notification may refresh metadata but must not recalculate history.
+        immutable_columns.add("credits_used")
+    update_columns = [
+        column.name for column in model.__table__.columns
+        if column.name not in immutable_columns
+    ]
     statement = insert(model).values(values)
     statement = statement.on_conflict_do_update(
         index_elements=[model.instance_code, model.id],
@@ -213,10 +306,27 @@ def import_marengo_source(source: "Source", batch_size: int, dry_run: bool = Fal
         source_id = only_source_id
         if only_source_id and ":" in only_source_id:
             token_table, source_id = only_source_id.split(":", 1)
-            if token_table not in SOURCE_TABLES:
+            if token_table not in SOURCE_NOTIFICATION_TABLES:
                 raise ValueError(f"Unknown Marengo notification table: {token_table}")
-        tables = [token_table] if token_table else list(SOURCE_TABLES)
+        tables = (
+            [] if token_table == "processing_jobs"
+            else ([token_table] if token_table else list(SOURCE_TABLES))
+        )
         page_limit = max(1, int(batch_size))
+        if token_table == "processing_jobs" and source_id is not None:
+            with source_engine.connect() as connection:
+                processing_job = connection.execute(
+                    PROCESSING_JOB_LOOKUP, {"source_id": source_id}
+                ).mappings().first()
+            if processing_job and processing_job["study_id"]:
+                with source_engine.connect() as connection:
+                    study_rows = [dict(row) for row in connection.execute(
+                        STUDY_LOOKUP_BY_ID, {"study_id": processing_job["study_id"]}
+                    ).mappings().all()]
+                counts["scanned"] += 1
+                counts["studies_imported"] += len(study_rows)
+                if not dry_run:
+                    _upsert_batch(portal_db, source.instance_code, "studies", study_rows)
         for table in tables:
             if source_id is not None:
                 with source_engine.connect() as connection:
@@ -227,6 +337,28 @@ def import_marengo_source(source: "Source", batch_size: int, dry_run: bool = Fal
                 counts[f"{table}_imported"] += len(rows)
                 if not dry_run:
                     _upsert_batch(portal_db, source.instance_code, table, rows)
+                if table in {"usage_logs", "jobs"}:
+                    # Usage logs supply the description and credits; successful
+                    # jobs supply the completion time. Refresh the linked study
+                    # whenever either source table changes.
+                    for usage_row in rows:
+                        params = None
+                        lookup = None
+                        if table == "usage_logs" and usage_row.get("study_uid"):
+                            lookup = STUDY_LOOKUP_BY_UID
+                            params = {"study_uid": usage_row["study_uid"]}
+                        elif table == "jobs" and usage_row.get("study_id"):
+                            lookup = STUDY_LOOKUP_BY_ID
+                            params = {"study_id": usage_row["study_id"]}
+                        if lookup is None:
+                            continue
+                        with source_engine.connect() as connection:
+                            study_rows = [dict(row) for row in connection.execute(
+                                lookup, params
+                            ).mappings().all()]
+                        counts["studies_imported"] = counts.get("studies_imported", 0) + len(study_rows)
+                        if not dry_run:
+                            _upsert_batch(portal_db, source.instance_code, "studies", study_rows)
             else:
                 after_id = ""
                 while True:

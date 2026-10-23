@@ -185,8 +185,11 @@ class MarengoStudy(Base):
     instance_code = Column(String(50), primary_key=True)
     id = Column(String, primary_key=True)
     modality = Column(String, nullable=False)
+    study_description = Column(Text, nullable=True)
     status = Column(ENUM(*MARENGO_JOB_STATUS, name="marengo_job_status", create_type=False), nullable=False)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
+    processing_completed_at = Column(DateTime, nullable=True)
+    credits_used = Column(Integer, nullable=False, server_default="0")
 
 
 class MarengoJob(Base):
