@@ -42,10 +42,16 @@ from app.auth import (
     COOKIE_SECURE,
     TOKEN_EXPIRATION,
 )
+from app.modality import MODALITY_CATEGORIES, normalize_modality
 
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _analytics_modality(value: str | None) -> str | None:
+    """Normalize stored modality codes for analytics grouping and display."""
+    return normalize_modality(value) or value
 
 
 @router.get("/api/v1/marengo/analytics")
@@ -89,14 +95,37 @@ def get_marengo_analytics(
         func.sum(case((MarengoUsageLog.success.is_(True), 1), else_=0)),
         func.sum(case((MarengoUsageLog.success.is_(False), 1), else_=0)),
     ).one()
+
+    normalized_studies: dict[str, dict[str, int]] = {}
+    for modality, total, success, failed in studies_by_modality:
+        name = normalize_modality(modality) or "Not specified"
+        item = normalized_studies.setdefault(
+            name, {"total": 0, "success": 0, "failed": 0}
+        )
+        item["total"] += int(total or 0)
+        item["success"] += int(success or 0)
+        item["failed"] += int(failed or 0)
+
+    normalized_jobs: dict[tuple[str, str | None], dict[str, int]] = {}
+    for modality, job_status, count, errors in jobs_by_modality:
+        key = (normalize_modality(modality) or "Not specified", job_status)
+        item = normalized_jobs.setdefault(key, {"count": 0, "errors": 0})
+        item["count"] += int(count or 0)
+        item["errors"] += int(errors or 0)
+
+    normalized_reviews: dict[tuple[str, str], int] = {}
+    for modality, review_status, count in reviews_by_modality_status:
+        key = (normalize_modality(modality) or "Not specified", review_status)
+        normalized_reviews[key] = normalized_reviews.get(key, 0) + int(count or 0)
+
     return {
         "studies": {
             "total": sum(int(row[1] or 0) for row in studies_by_modality),
             "success": sum(int(row[2] or 0) for row in studies_by_modality),
             "failed": sum(int(row[3] or 0) for row in studies_by_modality),
             "byModality": [
-                {"modality": modality, "total": int(total), "success": int(success or 0), "failed": int(failed or 0)}
-                for modality, total, success, failed in studies_by_modality
+                {"modality": modality, **counts}
+                for modality, counts in sorted(normalized_studies.items())
             ],
         },
         "jobs": {
@@ -107,16 +136,18 @@ def get_marengo_analytics(
             "byStatus": [{"status": status_name, "count": int(count), "errors": int(errors or 0)}
                          for status_name, count, errors, _retries, _latency in jobs_by_status],
             "byModalityStatus": [
-                {"modality": modality or "Not specified", "status": status_name,
-                 "count": int(count), "errors": int(errors or 0)}
-                for modality, status_name, count, errors in jobs_by_modality
+                {"modality": modality, "status": status_name,
+                 **counts}
+                for (modality, status_name), counts in sorted(
+                    normalized_jobs.items(), key=lambda item: (item[0][0], item[0][1] or "")
+                )
             ],
         },
         "reviews": {
             "total": sum(int(row[2]) for row in reviews_by_modality_status),
             "byModalityStatus": [
-                {"modality": modality or "Not specified", "status": review_status, "count": int(count)}
-                for modality, review_status, count in reviews_by_modality_status
+                {"modality": modality, "status": review_status, "count": count}
+                for (modality, review_status), count in sorted(normalized_reviews.items())
             ],
             "pushed": sum(int(count) for _modality, review_status, count in reviews_by_modality_status if review_status == "PUSHED"),
         },
@@ -649,10 +680,13 @@ def get_dashboard(
             "id": f"marengo:{study.instance_code}:{study.id}",
             "instanceCode": study.instance_code,
             "modality": study.modality,
-            "studyDescription": None,
+            "studyDescription": study.study_description,
             "processingCreatedAt": study.created_at.isoformat() if study.created_at else None,
-            "processingCompletedAt": None,
-            "creditsUsed": 0,
+            "processingCompletedAt": (
+                study.processing_completed_at.isoformat()
+                if study.processing_completed_at else None
+            ),
+            "creditsUsed": int(study.credits_used or 0),
             "syncStatus": "SYNCED",
             "syncedAt": sync_time.isoformat() if sync_time else None,
         })
@@ -764,7 +798,7 @@ def get_analytics(
         )
         item["records"] += int(records or 0)
     instance_rows = [
-        (item["instanceCode"], item["modality"], item["records"], item["credits"])
+        (item["instanceCode"], _analytics_modality(item["modality"]), item["records"], item["credits"])
         for item in by_instance_modality.values()
     ]
 
@@ -772,6 +806,7 @@ def get_analytics(
     for day, instance_code, modality, records, credits in daily_rows:
         if day is None:
             continue
+        modality = _analytics_modality(modality)
         day_text = day.isoformat() if hasattr(day, "isoformat") else str(day)
         item = daily_totals_by_key.setdefault(
             (day_text, instance_code, modality),
@@ -793,6 +828,7 @@ def get_analytics(
     for day, instance_code, modality, records in marengo_daily_studies:
         if day is None:
             continue
+        modality = _analytics_modality(modality)
         day_text = day.isoformat() if hasattr(day, "isoformat") else str(day)
         item = daily_totals_by_key.setdefault(
             (day_text, instance_code, modality),
@@ -805,6 +841,7 @@ def get_analytics(
     for day, instance_code, modality, description, records, credits in description_rows:
         if day is None:
             continue
+        modality = _analytics_modality(modality)
         day_text = day.isoformat() if hasattr(day, "isoformat") else str(day)
         item = description_totals_by_key.setdefault(
             (day_text, instance_code, modality, description),
@@ -813,14 +850,27 @@ def get_analytics(
         )
         item["records"] += int(records or 0)
         item["credits"] += int(credits or 0)
-    for day, instance_code, modality, records in marengo_daily_studies:
+    marengo_description_studies = db.query(
+        func.date(MarengoStudy.created_at),
+        MarengoStudy.instance_code,
+        MarengoStudy.modality,
+        func.nullif(func.trim(MarengoStudy.study_description), ""),
+        func.count(MarengoStudy.id),
+    ).group_by(
+        func.date(MarengoStudy.created_at),
+        MarengoStudy.instance_code,
+        MarengoStudy.modality,
+        MarengoStudy.study_description,
+    ).all()
+    for day, instance_code, modality, description, records in marengo_description_studies:
         if day is None:
             continue
+        modality = _analytics_modality(modality)
         day_text = day.isoformat() if hasattr(day, "isoformat") else str(day)
         item = description_totals_by_key.setdefault(
-            (day_text, instance_code, modality, None),
+            (day_text, instance_code, modality, description),
             {"date": day_text, "instanceCode": instance_code, "modality": modality,
-             "studyDescription": None, "records": 0, "credits": 0},
+             "studyDescription": description, "records": 0, "credits": 0},
         )
         item["records"] += int(records or 0)
 
@@ -843,16 +893,15 @@ def get_analytics(
         .filter(ModalityOption.is_active.is_(True))
         .all()
     )
-    modality_names = {
-        modality.strip().upper(): modality.strip()
-        for modality in modality_totals
-        if modality and modality.strip()
-    }
-    modality_names.update({
-        name.strip().upper(): name.strip()
-        for (name,) in configured_modalities
-        if name and name.strip()
-    })
+    modality_names = {name.upper(): name for name in MODALITY_CATEGORIES}
+    for (name,) in configured_modalities:
+        normalized = normalize_modality(name)
+        if normalized:
+            modality_names[normalized.upper()] = normalized
+    for modality in modality_totals:
+        normalized = normalize_modality(modality)
+        if normalized:
+            modality_names[normalized.upper()] = normalized
 
     return {
         "summary": {
@@ -1931,7 +1980,7 @@ def receive_sync(
         for _ in range(data.credits_used):
             record = SyncRecord(
                 instance_code=instance_code,
-                modality=data.modality,
+                modality=normalize_modality(data.modality, data.study_description),
                 study_description=data.study_description,
                 processing_created_at=data.processing_created_at,
                 processing_completed_at=data.processing_completed_at,

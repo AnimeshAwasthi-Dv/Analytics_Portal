@@ -2494,6 +2494,15 @@ button.analytics-kpi-card {
   margin-top: 4px;
 }
 
+/* A single selected modality otherwise expands its chart across the full panel. */
+.analytics-main-chart .analytics-trend-grid > .analytics-modality-trend:only-child {
+  width: min(100%, 720px);
+}
+
+.analytics-main-chart .analytics-trend-grid > .analytics-modality-trend:only-child .analytics-mini-chart {
+  height: 180px;
+}
+
 .analytics-main-chart .analytics-chart-label {
   fill: #526b86;
   font-size: 10px;

@@ -11,7 +11,11 @@ class MigrationTests(unittest.TestCase):
         config = Config(str(backend_root / "alembic.ini"))
         script = ScriptDirectory.from_config(config)
 
-        self.assertEqual(script.get_heads(), ["8fa1c6d24b73"])
+        self.assertEqual(script.get_heads(), ["f0a6d3c8b217"])
+        self.assertEqual(
+            script.get_revision("f0a6d3c8b217").down_revision,
+            ("c13e8b4f7a20", "e8c2f5a7d301"),
+        )
         self.assertEqual(
             script.get_revision("8fa1c6d24b73").down_revision,
             "f19b3c5d7a20",
