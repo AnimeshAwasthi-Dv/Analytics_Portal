@@ -15,7 +15,7 @@ export interface LicenseKeyAnalytics { license: DesktopLicense; planCredits:numb
 export interface MarengoAnalytics {
   studies: { total: number; success: number; failed: number; byModality: Array<{ modality: string; total: number; success: number; failed: number }> };
   jobs: { total: number; processingErrors: number; retryAttempts: number; averageLatencyMs: number; byStatus: Array<{ status: string; count: number; errors: number }>; byModalityStatus: Array<{ modality: string; status: string; count: number; errors: number }> };
-  reviews: { total: number; pushed: number; byModalityStatus: Array<{ modality: string; status: string; count: number }> };
+  reviews: { total: number; pushed: number; byStatus: Array<{ status: string; count: number }>; byModalityStatus: Array<{ modality: string; status: string; count: number }> };
   usage: { entries: number; creditsUsed: number; successful: number; failed: number };
 }
 

@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 
 def _analytics_modality(value: str | None) -> str | None:
     """Normalize stored modality codes for analytics grouping and display."""
-    return normalize_modality(value) or value
+    return normalize_modality(value) or (value.strip() if value and value.strip() else None)
 
 
 @router.get("/api/v1/marengo/analytics")
@@ -98,7 +98,7 @@ def get_marengo_analytics(
 
     normalized_studies: dict[str, dict[str, int]] = {}
     for modality, total, success, failed in studies_by_modality:
-        name = normalize_modality(modality) or "Not specified"
+        name = _analytics_modality(modality) or "Not specified"
         item = normalized_studies.setdefault(
             name, {"total": 0, "success": 0, "failed": 0}
         )
@@ -108,15 +108,17 @@ def get_marengo_analytics(
 
     normalized_jobs: dict[tuple[str, str | None], dict[str, int]] = {}
     for modality, job_status, count, errors in jobs_by_modality:
-        key = (normalize_modality(modality) or "Not specified", job_status)
+        key = (_analytics_modality(modality) or "Not specified", job_status)
         item = normalized_jobs.setdefault(key, {"count": 0, "errors": 0})
         item["count"] += int(count or 0)
         item["errors"] += int(errors or 0)
 
     normalized_reviews: dict[tuple[str, str], int] = {}
+    reviews_by_status: dict[str, int] = {}
     for modality, review_status, count in reviews_by_modality_status:
-        key = (normalize_modality(modality) or "Not specified", review_status)
+        key = (_analytics_modality(modality) or "Not specified", review_status)
         normalized_reviews[key] = normalized_reviews.get(key, 0) + int(count or 0)
+        reviews_by_status[review_status] = reviews_by_status.get(review_status, 0) + int(count or 0)
 
     return {
         "studies": {
@@ -145,6 +147,10 @@ def get_marengo_analytics(
         },
         "reviews": {
             "total": sum(int(row[2]) for row in reviews_by_modality_status),
+            "byStatus": [
+                {"status": review_status, "count": count}
+                for review_status, count in sorted(reviews_by_status.items())
+            ],
             "byModalityStatus": [
                 {"modality": modality, "status": review_status, "count": count}
                 for (modality, review_status), count in sorted(normalized_reviews.items())
@@ -673,6 +679,20 @@ def get_dashboard(
         .limit(50)
         .all()
     )
+    recent_study_ids = [study.id for study in recent_marengo_studies]
+    recent_review_names: dict[tuple[str, str], str] = {}
+    if recent_study_ids:
+        recent_reviews = (
+            db.query(MarengoReportReview)
+            .filter(MarengoReportReview.study_id.in_(recent_study_ids))
+            .order_by(MarengoReportReview.updated_at.desc(), MarengoReportReview.id.desc())
+            .all()
+        )
+        for review in recent_reviews:
+            if review.patient_name and review.patient_name.strip():
+                recent_review_names.setdefault(
+                    (review.instance_code, review.study_id), review.patient_name.strip()
+                )
     recent_rows = [serialize_sync_record(record) for record in recent_records]
     for study in recent_marengo_studies:
         sync_time = marengo_sync_times.get(study.instance_code)
@@ -681,6 +701,7 @@ def get_dashboard(
             "instanceCode": study.instance_code,
             "modality": study.modality,
             "studyDescription": study.study_description,
+            "patientName": recent_review_names.get((study.instance_code, study.id)),
             "processingCreatedAt": study.created_at.isoformat() if study.created_at else None,
             "processingCompletedAt": (
                 study.processing_completed_at.isoformat()
