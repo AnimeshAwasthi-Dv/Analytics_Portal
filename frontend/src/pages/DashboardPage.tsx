@@ -658,7 +658,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
         {(dashboard?.recentRecords ?? []).map((record) => (
           <tr key={record.id} className="text-slate-700">
             <td className="px-4 py-3 font-mono">
-              {record.id}
+              {record.patientName || record.id}
             </td>
 
             <td className="px-4 py-3">

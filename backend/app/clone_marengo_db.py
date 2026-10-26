@@ -6,8 +6,8 @@ Run from ``backend`` after configuring ``MARENGO_DATABASE_URL`` and
     python -m app.clone_marengo_db --batch-size 1000
 
 The clone reuses the live analytics sync mapping and is safe to rerun. It
-copies only analytics fields; patient identifiers/names and report JSON remain
-in the Marengo source database.
+copies review status and patient display names along with analytics fields;
+patient identifiers and report JSON remain in the Marengo source database.
 """
 from __future__ import annotations
 

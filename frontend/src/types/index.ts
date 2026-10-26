@@ -23,6 +23,7 @@ export interface SyncRecord {
   instanceCode: string;
   modality: string | null;
   studyDescription: string | null;
+  patientName?: string | null;
   processingCreatedAt: string | null;
   processingCompletedAt: string | null;
   creditsUsed: number;

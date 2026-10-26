@@ -29,6 +29,7 @@ export function MarengoAnalyticsPage() {
   useEffect(() => { void refresh(); }, []);
 
   const maxStudies = Math.max(1, ...((data?.studies.byModality ?? []).map(row => row.total)));
+  const processingJobs = data?.jobs.byStatus.find(row => row.status === "PROCESSING")?.count ?? 0;
 
   return <main className="license-page marengo-page">
     <header className="marengo-header">
@@ -42,7 +43,7 @@ export function MarengoAnalyticsPage() {
     {loading && !data ? <p className="license-message">Loading Marengo analytics...</p> : data && <>
       <section className="marengo-kpis" aria-label="Marengo summary">
         <article className="marengo-kpi marengo-kpi-blue"><span>Studies</span><strong>{number(data.studies.total)}</strong><small><b>{number(data.studies.success)}</b> successful / {number(data.studies.failed)} failed</small></article>
-        <article className="marengo-kpi marengo-kpi-violet"><span>Jobs in queue</span><strong>{number(data.jobs.total)}</strong><small>{number(data.jobs.processingErrors)} jobs with errors</small></article>
+        <article className="marengo-kpi marengo-kpi-violet"><span>Jobs in queue</span><strong>{number(processingJobs)}</strong><small>Currently processing</small></article>
         <article className="marengo-kpi marengo-kpi-amber"><span>Retry attempts</span><strong>{number(data.jobs.retryAttempts)}</strong><small>Average processing latency <b>{number(Math.round(data.jobs.averageLatencyMs))} ms</b></small></article>
         <article className="marengo-kpi marengo-kpi-green"><span>Credits recorded</span><strong>{number(data.usage.creditsUsed)}</strong><small>Across {number(data.usage.entries)} usage records</small></article>
       </section>
@@ -58,12 +59,12 @@ export function MarengoAnalyticsPage() {
         </article>
 
         <article className="marengo-card marengo-workflow-card">
-          <div className="marengo-card-heading"><div><span className="marengo-eyebrow">WORKFLOW</span><h2>Job status</h2></div><span className="marengo-total-chip">{number(data.jobs.total)} jobs</span></div>
-          {data.jobs.byStatus.length ? <div className="marengo-status-list">{data.jobs.byStatus.map(row => <div className="marengo-status-row" key={row.status}>
+          <div className="marengo-card-heading"><div><span className="marengo-eyebrow">REPORTS</span><h2>Report review status</h2></div><span className="marengo-total-chip">{number(data.reviews.total)} reports</span></div>
+          {data.reviews.byStatus.length ? <div className="marengo-status-list">{data.reviews.byStatus.map(row => <div className="marengo-status-row" key={row.status}>
             <span className={`marengo-status-icon marengo-status-${statusClass(row.status)}`} aria-hidden="true">{statusClass(row.status).includes("success") ? "OK" : statusClass(row.status).includes("fail") ? "!" : "..."}</span>
-            <div className="marengo-status-copy"><strong>{row.status}</strong><span>{number(row.errors)} with errors</span></div>
+            <div className="marengo-status-copy"><strong>{row.status}</strong><span>Reports</span></div>
             <b>{number(row.count)}</b>
-          </div>)}</div> : <p className="marengo-empty">No job data synced yet.</p>}
+          </div>)}</div> : <p className="marengo-empty">No report review data synced yet.</p>}
           <div className="marengo-review-summary"><span>Credits successful</span><strong>{number(data.usage.successful)}</strong><span>Credits failed</span><strong>{number(data.usage.failed)}</strong><span>Reports pushed</span><strong>{number(data.reviews.pushed)}</strong></div>
         </article>
       </section>
