@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, type DesktopLicense } from "../services/api";
+import { GeoLocationMap, isValidCoordinate } from "../Components/GeoLocationMap";
 import "./desktop.css";
 
 type Usage = "Unused" | "Low usage" | "Medium usage" | "High usage";
@@ -53,8 +54,7 @@ export function LicenseAnalyticsPage() {
   const maxByDate=new Map<string,number>();visible.forEach(x=>{const dates=[x.createdAt,...(x.activationCount?[x.startsAt]:[]),x.lastValidationAt,x.lastSync];dates.forEach(value=>{if(value){const day=value.slice(0,10);maxByDate.set(day,(maxByDate.get(day)??0)+1);}});});
   const timeline=[...maxByDate].sort(([a],[b])=>a.localeCompare(b)).slice(-14);
   const maxTimeline=Math.max(1,...timeline.map(([,n])=>n));
-  const mapped=visible.filter(x=>x.latitude!==null&&x.longitude!==null);
-  const geo= mapped.map(x=>({x, left: 5 + ((x.longitude! + 180) / 360) * 90, top: 5 + ((90 - x.latitude!) / 180) * 90}));
+  const mapped=visible.filter(x=>isValidCoordinate(x.latitude,x.longitude));
   const bar=(rows:Array<{name:string;count:number}>)=><div className="license-bars">{rows.map(r=><div className="license-bar-row" key={r.name}><div><span>{r.name}</span><strong>{r.count}</strong></div><i><b style={{width:`${Math.max(1,100*r.count/Math.max(1,...rows.map(x=>x.count)))}%`}}/></i></div>)}{!rows.length&&<p className="license-empty">No matching records.</p>}</div>;
   const clear=()=>{setSearch("");setOrganisation("ALL");setPlatform("ALL");setStatus("ALL");setUsage("ALL");setPlanFilter("ALL");};
   return <main className="license-page"><header className="license-header"><div><h1>Analytics</h1><p>Complete license activity, usage, organisation, platform, and location intelligence</p></div><button className="secondary" onClick={()=>setRefresh(x=>x+1)}>Refresh</button></header>
@@ -65,7 +65,7 @@ export function LicenseAnalyticsPage() {
       <section className="license-analytics-grid license-analytics-three"><article className="license-panel"><h2>Platform mix</h2>{bar(platformRows)}</article><article className="license-panel"><h2>License status</h2>{bar(statusRows)}</article><article className="license-panel"><h2>Usage levels</h2>{bar(usageRows)}</article></section>
       <section className="license-analytics-grid"><article className="license-panel"><h2>Organisation wise usage</h2>{bar(organisationRows)}</article><article className="license-panel"><h2>Plan distribution</h2>{bar(planRows)}</article></section>
       <section className="license-panel license-timeline"><h2>Recent activity timeline</h2><div className="license-timeline-chart">{timeline.map(([day,count])=><div key={day} title={`${day}: ${count} events`}><i style={{height:`${Math.max(8,count*100/maxTimeline)}%`}}/><span>{new Date(`${day}T00:00:00`).toLocaleDateString(undefined,{month:"2-digit",day:"2-digit"})}</span></div>)}{!timeline.length&&<p className="license-empty">No dated license activity in this filter.</p>}</div><small>Bars combine license creation, activation, validation, and sync timestamps. Filtered view: {visible.length} licenses.</small></section>
-      <section className="license-panel license-geo"><div className="license-section-title"><h2>Geo location map</h2><span>{mapped.length} mapped licenses in current filters</span></div><div className="license-geo-map" role="img" aria-label={`${mapped.length} licenses with saved coordinates`}>{geo.map(({x,left,top})=><i key={x.id} title={`${x.fullName||x.licenseKey} (${x.latitude}, ${x.longitude})`} style={{left:`${left}%`,top:`${top}%`}}/>)}{!mapped.length&&<p>No license coordinates recorded yet.</p>}</div></section>
+      <section className="license-panel license-geo"><div className="license-section-title"><h2>Geo location map</h2><span>{mapped.length} mapped licenses in current filters</span></div><GeoLocationMap licenses={mapped}/></section>
       <div className="license-table-wrap"><div className="license-section-title"><h2>Detailed license activity</h2><span>{visible.length} rows</span></div><table><thead><tr><th>License</th><th>Organisation</th><th>Platform</th><th>Status</th><th>Credits left</th><th>Usage</th><th>Last sync</th><th>Actions</th></tr></thead><tbody>{visible.map(x=>{const used=Math.max(0,x.creditsTotal-x.creditsRemaining);const percent=x.creditsTotal?Math.round(used*100/x.creditsTotal):0;return <tr key={x.id}><td className="license-key">{x.licenseKey}</td><td>{x.vendor||"Unassigned"}</td><td>{x.platform}</td><td>{x.status}</td><td>{x.creditsRemaining}</td><td>{percent}%</td><td>{x.lastSync?new Date(x.lastSync).toLocaleString():"Never"}</td><td><button className="secondary" onClick={()=>navigate(`/desktop/key-analytics?licenseId=${x.id}`)}>Key analytics</button></td></tr>})}{!visible.length&&<tr><td colSpan={8} className="license-empty">No licenses match these filters.</td></tr>}</tbody></table></div>
     </>}
   </main>;

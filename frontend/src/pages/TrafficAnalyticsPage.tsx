@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from "react";
+﻿import { memo, useEffect, useMemo, useState } from "react";
 import {
   api,
   type DailyInstanceTraffic,
@@ -472,17 +472,17 @@ export function TrafficAnalyticsPage() {
             <article><span>Studies received</span><strong>{loading ? "..." : numberFormat.format(sourceActivity?.totalStudies ?? 0)}</strong><small>Successful records saved in this period</small></article>
             <article><span>Credits used</span><strong>{loading ? "..." : numberFormat.format(sourceActivity?.creditsUsed ?? 0)}</strong><small>Summed from imported study records</small></article>
             <article><span>Identified instances</span><strong>{loading ? "..." : numberFormat.format(sourceActivity?.activeInstances ?? 0)}</strong><small>Source database identifiers</small></article>
-            <article><span>Latest sync</span><strong>{loading ? "..." : sourceActivity?.lastSync ? new Date(sourceActivity.lastSync).toLocaleString() : "—"}</strong><small>Most recent imported study</small></article>
+            <article><span>Latest sync</span><strong>{loading ? "..." : sourceActivity?.lastSync ? new Date(sourceActivity.lastSync).toLocaleString() : "â€”"}</strong><small>Most recent imported study</small></article>
           </div>
           <section className="traffic-chart-grid traffic-source-chart-grid" aria-label="Imported study and credit trends">
             <TrafficMetricChart
-              title={`Studies received by ${granularity} · ${allInstances.find((row) => row.instance === selectedInstance)?.name ?? "all instances"}`}
+              title={`Studies received by ${granularity} Â· ${allInstances.find((row) => row.instance === selectedInstance)?.name ?? "all instances"}`}
               description="Number of successfully imported studies in each time period."
               points={sourceTrend}
               metric="studies"
             />
             <TrafficMetricChart
-              title={`Credits used by ${granularity} · ${allInstances.find((row) => row.instance === selectedInstance)?.name ?? "all instances"}`}
+              title={`Credits used by ${granularity} Â· ${allInstances.find((row) => row.instance === selectedInstance)?.name ?? "all instances"}`}
               description="Credits attributed to imported studies in each time period."
               points={sourceTrend}
               metric="creditsUsed"
@@ -517,7 +517,7 @@ export function TrafficAnalyticsPage() {
           <article><span>Requests</span><strong>{loading ? "..." : numberFormat.format(displayRequests)}</strong><small>All portal API traffic in range</small></article>
           <article><span>Data transferred</span><strong>{loading ? "..." : formatBytes(displayBytes)}</strong><small>Request + response bytes</small></article>
           <article><span>API-key instances</span><strong>{loading ? "..." : numberFormat.format(overview?.activeInstances ?? 0)}</strong><small>Portal API-key instances</small></article>
-          <article><span>Average response</span><strong>{loading ? "�" : `${overview?.averageResponseTimeMs ?? 0} ms`}</strong><small>{overview?.successRate ?? 0}% successful requests</small></article>
+          <article><span>Average response</span><strong>{loading ? "…" : `${overview?.averageResponseTimeMs ?? 0} ms`}</strong><small>{overview?.successRate ?? 0}% successful requests</small></article>
         </section>
 
         {loading && !analytics ? (

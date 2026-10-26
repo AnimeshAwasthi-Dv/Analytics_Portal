@@ -1705,6 +1705,7 @@ def _serialize_license(item: DesktopLicense, plan: LicensePlan):
     service = item.license_app_scope
     if not service or service.upper() not in {"XRAY", "CT"}:
         service = _service_from_plan(plan)
+    service = service.upper()
     return {"id": item.license_id, "licenseKey": item.license_key,
             "service": service,
             "platform": item.app_version_type, "planId": item.plan_id, "planName": plan.plan_name,
@@ -1944,7 +1945,7 @@ def desktop_license_analytics(service: str | None = None, db: Session = Depends(
             if event_at:
                 day = event_at.date().isoformat()
                 timeline[day] = timeline.get(day, 0) + 1
-    recent = [{"licenseKey": item.license_key, "service": item.license_app_scope or _service_from_plan(plan),
+    recent = [{"licenseKey": item.license_key, "service": (item.license_app_scope or _service_from_plan(plan)).upper(),
                "platform": item.app_version_type, "status": _CODE_TO_STATUS.get(item.status, item.status),
                "credits": item.credit_left, "creditsTotal": plan.credits,
                "creditsUsed": max(plan.credits - item.credit_left, 0),
