@@ -78,9 +78,23 @@
 .license-section-title h2 { margin:0; font-size:16px; font-weight:650; }
 .license-section-title span { color:#64748b; font-size:12px; }
 .license-geo { margin-bottom:16px; }
-.license-geo-map { position:relative; height:310px; overflow:hidden; border:1px solid #d8e2dc; border-radius:7px; background-color:#eef4ee; background-image:linear-gradient(27deg,transparent 47%,#d5e2d5 48%,#d5e2d5 49%,transparent 50%),linear-gradient(148deg,transparent 43%,#dce6d8 44%,#dce6d8 45%,transparent 46%),linear-gradient(90deg,transparent 49%,#e3e9db 50%,transparent 51%),linear-gradient(#e8eee3 1px,transparent 1px),linear-gradient(90deg,#e8eee3 1px,transparent 1px); background-size:220px 140px,260px 170px,100% 100%,42px 42px,42px 42px; }
-.license-geo-map>i { position:absolute; width:12px; height:12px; transform:translate(-50%,-50%) rotate(-45deg); border:2px solid #fff; border-radius:50% 50% 50% 0; background:#2783d1; box-shadow:0 1px 4px #33415566; }
-.license-geo-map>p { position:absolute; inset:0; display:grid; place-items:center; color:#64748b; font-size:13px; }
+.license-geo-map { position:relative; height:380px; overflow:hidden; border:1px solid #d8e2dc; border-radius:7px; background:#f8fafc; }
+.license-geo-map .leaflet-container { width:100%; height:100%; z-index:1; font-family:inherit; }
+.license-geo-map-empty { background:#f8fafc; }
+.license-geo-map>p, .license-geo-map-empty>p { position:absolute; inset:0; display:grid; place-items:center; color:#64748b; font-size:13px; margin:0; }
+.custom-geo-marker { background:transparent; border:none; }
+.geo-marker-pin { width:26px; height:26px; border-radius:50% 50% 50% 0; background:#2563eb; transform:rotate(-45deg); border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,0.35); display:flex; align-items:center; justify-content:center; cursor:pointer; transition:transform .15s ease, background-color .15s ease; }
+.geo-marker-pin:hover { background:#1d4ed8; transform:rotate(-45deg) scale(1.1); }
+.geo-marker-dot { width:8px; height:8px; border-radius:50%; background:#fff; transform:rotate(45deg); }
+.geo-license-popup .leaflet-popup-content-wrapper { border-radius:8px; box-shadow:0 10px 25px -5px rgba(0,0,0,0.15),0 8px 10px -6px rgba(0,0,0,0.1); padding:0; overflow:hidden; }
+.geo-license-popup .leaflet-popup-content { margin:14px 16px; min-width:230px; font-family:inherit; font-size:13px; line-height:1.4; color:#1e293b; }
+.geo-popup-title { font-size:15px; font-weight:700; color:#1d4ed8; font-family:ui-monospace,Consolas,monospace; margin:0 0 10px 0; padding-bottom:8px; border-bottom:1px solid #e2e8f0; }
+.geo-popup-grid { display:grid; grid-template-columns:auto 1fr; gap:6px 12px; align-items:center; margin-bottom:12px; }
+.geo-popup-grid span:not(.license-status) { color:#64748b; font-size:11px; font-weight:600; text-transform:uppercase; }
+.geo-popup-grid strong, .geo-popup-grid code { color:#0f172a; text-align:right; font-size:12px; }
+.geo-popup-grid code { font-family:ui-monospace,Consolas,monospace; }
+.geo-popup-btn { display:flex; align-items:center; justify-content:center; width:100%; padding:7px 12px; background:#2563eb; color:#fff!important; text-decoration:none; font-weight:600; font-size:12px; border-radius:5px; transition:background .15s ease; box-sizing:border-box; }
+.geo-popup-btn:hover { background:#1d4ed8; color:#fff; }
 @media(max-width:1100px) { .license-analytics-three { grid-template-columns:repeat(2,minmax(0,1fr)); } .license-filter-grid { grid-template-columns:repeat(3,minmax(0,1fr)); } .license-filter-grid input { grid-column:span 2; } .license-filter-grid .text-button { grid-column:3; } }
 @media(max-width:760px) { .license-page { padding:18px 14px 30px; } .license-header { align-items:flex-start; } .license-header h1 { font-size:21px; } .license-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; } .license-kpis article, .license-panel { padding:13px; } .license-analytics-grid, .license-analytics-three { grid-template-columns:1fr; } .license-filter-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .license-filter-grid input { grid-column:span 2; } .license-filter-grid .text-button { grid-column:2; } .license-detail-list { grid-template-columns:1fr; } .license-form-grid { grid-template-columns:1fr; } .license-geo-map { height:230px; } }
 @media(max-width:420px) { .license-header { flex-direction:column; } .license-toolbar { align-items:stretch; } .license-toolbar input { width:100%; } .license-tabs { width:100%; } .license-tabs button { flex:1; } .license-kpis strong { font-size:21px; } .license-modal { padding:16px; } }
