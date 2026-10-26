@@ -212,6 +212,7 @@ class MarengoJob(Base):
 
 
 class MarengoReportReview(Base):
+    """Selected report review fields, including the patient display name."""
     __tablename__ = "marengo_report_reviews"
     __table_args__ = (
         Index("ix_marengo_report_reviews_modality_status", "modality", "status"),
@@ -224,6 +225,7 @@ class MarengoReportReview(Base):
     service_name = Column(String, nullable=False)
     modality = Column(String, nullable=True)
     status = Column(ENUM(*MARENGO_REVIEW_STATUS, name="marengo_report_review_status", create_type=False), nullable=False, server_default="PENDING")
+    patient_name = Column(Text, nullable=True)
     output_format = Column(ENUM(*MARENGO_RETURN_FORMAT, name="marengo_return_format", create_type=False), nullable=False, server_default="DICOM_ENCAPSULATED_PDF")
     locked = Column(Boolean, nullable=False, server_default="false")
     generated_at = Column(DateTime, nullable=False, server_default=func.now())

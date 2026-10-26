@@ -10,7 +10,7 @@ The portal reads successful work directly from the three configured PostgreSQL d
 
 The worker writes to the portal database's `sync_records` table. It uses `(instance_code, source_record_id)` to make repeated imports idempotent.
 
-Marengo analytics are also synchronized into the dedicated `marengo_studies`, `marengo_jobs`, `marengo_report_reviews`, and `marengo_usage_logs` tables. Before reading source rows, the worker validates the expected column types, nullability, defaults, and enum labels against the live Marengo database. Study IDs link jobs through nullable `jobs.studyId`; rows with a missing or unmatched study remain available in job totals. Report JSON, patient names/IDs, accessions, and usage messages are not copied. Job error text is reduced to a boolean error indicator to avoid importing potentially identifying details.
+Marengo analytics are also synchronized into the dedicated `marengo_studies`, `marengo_jobs`, `marengo_report_reviews`, and `marengo_usage_logs` tables. Before reading source rows, the worker validates the expected column types, nullability, defaults, and enum labels against the live Marengo database. Study IDs link jobs through nullable `jobs.studyId`; rows with a missing or unmatched study remain available in job totals. The report review status is shown as the main workflow status on Marengo Analytics. Patient names from `report_reviews.patientName` are copied to `marengo_report_reviews.patient_name` and shown in the Dashboard's Record column for Marengo studies. Patient IDs, report JSON, accessions, and usage messages are not copied. Job error text is reduced to a boolean error indicator.
 
 ## Configure connections
 
@@ -74,7 +74,7 @@ cd /d/CDS/backend
 ../.venv/Scripts/python.exe -m app.clone_marengo_db --batch-size 1000
 ```
 
-The clone reads only `MARENGO_DATABASE_URL` and writes to `DATABASE_URL`. It is safe to rerun and upserts by source ID plus instance code. It uses the same live-schema validation and analytics-only field mapping as ongoing sync. It does not copy patient identifiers or names, accessions, report JSON, usage messages, or raw job error text.
+The clone reads only `MARENGO_DATABASE_URL` and writes to `DATABASE_URL`. It is safe to rerun and upserts by source ID plus instance code. It uses the same field mapping as ongoing sync, including report review status and patient names for the Dashboard. It does not copy patient identifiers, accessions, report JSON, usage messages, or raw job error text.
 
 Start both Marengo analytics and Validation Portal license listeners from the single live-sync entry point:
 

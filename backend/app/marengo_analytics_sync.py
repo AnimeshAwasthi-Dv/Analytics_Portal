@@ -136,7 +136,8 @@ SOURCE_SELECTS = {
                            "latencyMs" AS latency_ms, "createdAt" AS created_at, "updatedAt" AS updated_at
                     FROM public.jobs WHERE id > :after_id ORDER BY id LIMIT :limit'''),
     "report_reviews": text('''SELECT id, "studyId" AS study_id, "serviceName" AS service_name,
-                                    modality, status, "outputFormat" AS output_format, locked,
+                                    modality, status, "patientName" AS patient_name,
+                                    "outputFormat" AS output_format, locked,
                                     "generatedAt" AS generated_at, "pushedAt" AS pushed_at,
                                     "reviewedAt" AS reviewed_at, "approvedAt" AS approved_at,
                                     "createdAt" AS created_at, "updatedAt" AS updated_at
@@ -157,7 +158,8 @@ SOURCE_LOOKUPS = {
                            "latencyMs" AS latency_ms, "createdAt" AS created_at, "updatedAt" AS updated_at
                     FROM public.jobs WHERE id = :source_id'''),
     "report_reviews": text('''SELECT id, "studyId" AS study_id, "serviceName" AS service_name,
-                                    modality, status, "outputFormat" AS output_format, locked,
+                                    modality, status, "patientName" AS patient_name,
+                                    "outputFormat" AS output_format, locked,
                                     "generatedAt" AS generated_at, "pushedAt" AS pushed_at,
                                     "reviewedAt" AS reviewed_at, "approvedAt" AS approved_at,
                                     "createdAt" AS created_at, "updatedAt" AS updated_at
@@ -227,6 +229,9 @@ def _record_values(table: str, row: dict[str, Any]) -> dict[str, Any]:
     if table == "studies":
         modality = normalize_modality(row.get("modality"), row.get("study_description"))
         if modality is None:
+            # Keep the source label so analytics can show unfamiliar values
+            # instead of collapsing every one into "Not specified".
+            modality = str(row.get("modality") or "").strip() or "Not specified"
             logger.warning(
                 "Unrecognized Marengo modality for source study id=%s; preserving source label and applying the non-X-ray credit rule",
                 row.get("id"),
@@ -253,9 +258,12 @@ def _record_values(table: str, row: dict[str, Any]) -> dict[str, Any]:
     if table == "jobs":
         return {**row, "has_error": bool(row["has_error"])}
     if table == "report_reviews":
+        modality = normalize_modality(row.get("modality"), row.get("service_name"))
+        if modality is None:
+            modality = str(row.get("modality") or "").strip() or "Not specified"
         return {
             **row,
-            "modality": normalize_modality(row.get("modality"), row.get("service_name")),
+            "modality": modality,
         }
     if table == "usage_logs":
         return {key: value for key, value in row.items() if key != "study_uid"}
