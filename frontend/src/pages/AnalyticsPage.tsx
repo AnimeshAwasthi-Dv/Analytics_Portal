@@ -915,6 +915,29 @@ export function AnalyticsPage() {
               </div>
             </section>
 
+            <section className="analytics-panel analytics-table-panel" aria-label="Centre-wise study analytics">
+              <div className="analytics-section-heading">
+                <h2>Studies by centre</h2>
+                <span className="analytics-section-note">All synced data, grouped by source instance</span>
+              </div>
+              <div className="analytics-table-scroll">
+                <table className="analytics-table">
+                  <thead><tr><th>Centre</th><th>Centre ID</th><th>Instance</th><th>Studies</th><th>Credits</th></tr></thead>
+                  <tbody>
+                    {(analytics.byCentre ?? []).map((row) => (
+                      <tr key={`${row.instanceCode}:${row.centreId}`}>
+                        <td>{row.centreName}</td><td>{row.centreId}</td><td>{row.instanceCode}</td>
+                        <td>{numberFormat.format(row.studies)}</td><td>{numberFormat.format(row.credits)}</td>
+                      </tr>
+                    ))}
+                    {!(analytics.byCentre ?? []).length && (
+                      <tr><td colSpan={5} className="analytics-empty">No centre mappings have been synced yet.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
             <section className="analytics-panel analytics-deep-dive">
               <div className="analytics-section-heading analytics-deep-heading">
                 <div>

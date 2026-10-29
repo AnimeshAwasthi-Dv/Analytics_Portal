@@ -72,6 +72,8 @@ class CreditCalculationTests(unittest.TestCase):
         self.assertIn('abs."instanceCount" AS image_count', query)
         self.assertIn('abs."studyInstanceUid" AS source_study_uid', query)
         self.assertIn('b."processingJobId" = pj.id', query)
+        self.assertIn('LEFT JOIN public.clients AS c ON c.id = pj."clientId"', query)
+        self.assertIn("c.kind::text)) = 'CENTER'", query)
         self.assertNotIn('pj."imageCount" AS image_count', query)
         self.assertIn('CAST(:source_id AS TEXT)', query)
 
@@ -125,6 +127,10 @@ class CreditCalculationTests(unittest.TestCase):
             "image_count": 10,
             "service_type": "CR",
             "study_description": "Chest X-Ray",
+            "source_study_uid": "1.2.3",
+            "centre_id": "centre-1",
+            "centre_name": "Centre One",
+            "centre_kind": "CENTER",
             "processing_created_at": datetime.now(timezone.utc),
             "processing_completed_at": datetime.now(timezone.utc),
         }
@@ -189,12 +195,15 @@ class CreditCalculationTests(unittest.TestCase):
         ):
             first = import_source(source, batch_size=10, only_source_id="job-id-text")
             source_row["image_count"] = 99
+            source_row["centre_name"] = "Centre Renamed"
             second = import_source(source, batch_size=10, only_source_id="job-id-text")
 
         self.assertEqual(first["imported"], 1)
         self.assertEqual(second["duplicates"], 1)
         self.assertEqual(len(stored_records), 1)
         self.assertEqual(stored_records[0].credits_used, 10)
+        self.assertEqual(stored_records[0].centre_name, "Centre Renamed")
+        self.assertEqual(stored_records[0].source_study_uid, "1.2.3")
 
     def test_marengo_clone_calculates_study_credits_from_processing_jobs(self):
         with patch("app.marengo_analytics_sync.logger.warning"):
@@ -207,6 +216,22 @@ class CreditCalculationTests(unittest.TestCase):
         self.assertEqual(ct["credits_used"], 1)
         self.assertEqual(xray["credits_used"], 744)
         self.assertNotIn("image_count", ct)
+
+    def test_marengo_study_keeps_centre_mapping_only_for_centres(self):
+        values = _record_values("studies", {
+            "id": "study-1", "modality": "CT", "image_count": 20,
+            "centre_id": "client-1", "centre_name": "Centre One",
+            "centre_kind": "CENTER",
+        })
+        self.assertEqual(values["centre_id"], "client-1")
+        self.assertEqual(values["centre_name"], "Centre One")
+        self.assertNotIn("centre_kind", values)
+        group = _record_values("studies", {
+            "id": "study-2", "modality": "CT", "image_count": 20,
+            "centre_id": "group-1", "centre_name": "Group One", "centre_kind": "GROUP",
+        })
+        self.assertIsNone(group["centre_id"])
+        self.assertIsNone(group["centre_name"])
 
     def test_marengo_missing_xray_count_is_zero(self):
         with self.assertLogs("portal-marengo-analytics", level="WARNING"):

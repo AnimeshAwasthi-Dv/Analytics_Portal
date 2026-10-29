@@ -65,6 +65,13 @@ export interface AnalyticsResponse {
     records: number;
     credits: number;
   }>;
+  byCentre: Array<{
+    centreId: string;
+    centreName: string;
+    instanceCode: string;
+    studies: number;
+    credits: number;
+  }>;
   lastUpdated: string;
 }
 

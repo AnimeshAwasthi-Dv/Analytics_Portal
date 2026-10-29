@@ -909,6 +909,41 @@ def get_analytics(
     total_records = sum(records for records, _credits in modality_totals.values())
     total_credits = sum(credits for _records, credits in modality_totals.values())
 
+    # Aggregate centre counts in PostgreSQL. PACS jobs sharing a source study UID
+    # count once as a study, while credit events remain additive.
+    centre_totals: dict[tuple[str, str, str], dict[str, Any]] = {}
+    source_centre_rows = db.query(
+        SyncRecord.centre_id,
+        SyncRecord.centre_name,
+        SyncRecord.instance_code,
+        func.count(func.distinct(func.coalesce(SyncRecord.source_study_uid, SyncRecord.source_record_id))),
+        func.coalesce(func.sum(SyncRecord.credits_used), 0),
+    ).filter(
+        SyncRecord.sync_status == "SYNCED",
+        SyncRecord.centre_id.is_not(None),
+    ).group_by(
+        SyncRecord.centre_id, SyncRecord.centre_name, SyncRecord.instance_code,
+    ).all()
+    for centre_id, centre_name, instance_code, studies, credits in source_centre_rows:
+        key = (str(centre_id), str(centre_name or "Unnamed centre"), str(instance_code))
+        centre_totals[key] = {"centreId": key[0], "centreName": key[1], "instanceCode": key[2],
+                              "studies": int(studies or 0), "credits": int(credits or 0)}
+    marengo_centre_rows = db.query(
+        MarengoStudy.centre_id,
+        MarengoStudy.centre_name,
+        MarengoStudy.instance_code,
+        func.count(MarengoStudy.id),
+        func.coalesce(func.sum(MarengoStudy.credits_used), 0),
+    ).filter(MarengoStudy.centre_id.is_not(None)).group_by(
+        MarengoStudy.centre_id, MarengoStudy.centre_name, MarengoStudy.instance_code,
+    ).all()
+    for centre_id, centre_name, instance_code, studies, credits in marengo_centre_rows:
+        key = (str(centre_id), str(centre_name or "Unnamed centre"), str(instance_code))
+        item = centre_totals.setdefault(key, {"centreId": key[0], "centreName": key[1], "instanceCode": key[2],
+                                               "studies": 0, "credits": 0})
+        item["studies"] += int(studies or 0)
+        item["credits"] += int(credits or 0)
+
     configured_modalities = (
         db.query(ModalityOption.name)
         .filter(ModalityOption.is_active.is_(True))
@@ -960,6 +995,7 @@ def get_analytics(
             }
             for instance_code, modality, records, credits in instance_rows
         ],
+        "byCentre": sorted(centre_totals.values(), key=lambda row: (row["centreName"].casefold(), row["instanceCode"])),
         "lastUpdated": datetime.now(timezone.utc).isoformat(),
     }
 

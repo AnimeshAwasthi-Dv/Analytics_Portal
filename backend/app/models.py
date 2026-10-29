@@ -94,11 +94,17 @@ class SyncRecord(Base):
 
     source_record_id = Column(String(120), nullable=True)
 
+    # PACS source study UID groups multiple processing jobs for centre analytics.
+    source_study_uid = Column(String(120), nullable=True, index=True)
+
     instance_code = Column(
         String(50),
         nullable=False,
         index=True
     )
+
+    centre_id = Column(String(120), nullable=True, index=True)
+    centre_name = Column(String(255), nullable=True)
 
     modality = Column(String(50), nullable=True)
 
@@ -180,10 +186,15 @@ MARENGO_RETURN_FORMAT = (
 class MarengoStudy(Base):
     """Analytics-safe study fields; report JSON and patient identifiers stay in Marengo."""
     __tablename__ = "marengo_studies"
-    __table_args__ = (Index("ix_marengo_studies_modality_status", "modality", "status"),)
+    __table_args__ = (
+        Index("ix_marengo_studies_modality_status", "modality", "status"),
+        Index("ix_marengo_studies_centre", "centre_id", "instance_code"),
+    )
 
     instance_code = Column(String(50), primary_key=True)
     id = Column(String, primary_key=True)
+    centre_id = Column(String(120), nullable=True)
+    centre_name = Column(String(255), nullable=True)
     modality = Column(String, nullable=False)
     study_description = Column(Text, nullable=True)
     status = Column(ENUM(*MARENGO_JOB_STATUS, name="marengo_job_status", create_type=False), nullable=False)

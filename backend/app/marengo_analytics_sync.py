@@ -95,12 +95,17 @@ SOURCE_ENUMS = {
 }
 
 STUDY_SELECT_FIELDS = '''
-    SELECT s.id, s.modality, s.status, s."createdAt" AS created_at,
+    SELECT s.id, s.modality, s.status,
+           CASE WHEN UPPER(BTRIM(c.kind::text)) = 'CENTER' THEN c.id::text END AS centre_id,
+           CASE WHEN UPPER(BTRIM(c.kind::text)) = 'CENTER' THEN c.name END AS centre_name,
+           c.kind AS centre_kind,
+           s."createdAt" AS created_at,
            latest_usage.service_name AS study_description,
            COALESCE(processing_job.completed_at, completed_job.completed_at,
                     usage_summary.usage_completed_at) AS processing_completed_at,
            processing_job.image_count AS image_count
     FROM public.studies AS s
+    LEFT JOIN public.clients AS c ON c.id = s."clientId"
     LEFT JOIN LATERAL (
         SELECT u."serviceName" AS service_name
         FROM public.usage_logs AS u
@@ -221,6 +226,33 @@ def verify_source_schema(engine: Engine) -> None:
     for name, labels in SOURCE_ENUMS.items():
         if enums.get(name) != labels:
             errors.append(f"public enum {name} is {enums.get(name)!r}, expected {labels!r}")
+    try:
+        client_columns = {
+            column["name"]: column
+            for column in inspector.get_columns("clients", schema="public")
+        }
+        client_pk = inspector.get_pk_constraint("clients", schema="public").get("constrained_columns", [])
+        for required in ("id", "name", "kind"):
+            if required not in client_columns:
+                errors.append(f"public.clients.{required} is missing (required for centre mapping)")
+        if client_pk != ["id"]:
+            errors.append(f"public.clients primary key is {client_pk!r}, expected ['id'] for centre mapping")
+        studies_fks = inspector.get_foreign_keys("studies", schema="public")
+        if not any(
+            fk.get("constrained_columns") == ["clientId"]
+            and fk.get("referred_schema") in (None, "public")
+            and fk.get("referred_table") == "clients"
+            and fk.get("referred_columns") == ["id"]
+            for fk in studies_fks
+        ):
+            errors.append("public.studies.clientId does not have a foreign key to public.clients.id")
+        if "clientId" in {column["name"] for column in inspector.get_columns("studies", schema="public")} and "id" in client_columns:
+            if str(client_columns["id"]["type"]).upper() != str(
+                next(column for column in inspector.get_columns("studies", schema="public") if column["name"] == "clientId")["type"]
+            ).upper():
+                errors.append("public.studies.clientId and public.clients.id have different source types")
+    except Exception as exc:
+        errors.append(f"could not verify public.clients centre mapping: {exc}")
     if errors:
         raise RuntimeError("Live Marengo schema does not match the configured analytics mapping: " + "; ".join(errors))
 
@@ -250,8 +282,11 @@ def _record_values(table: str, row: dict[str, Any]) -> dict[str, Any]:
                     "Marengo X-ray study has no valid processing_jobs.imageCount; recording zero credits for source study id=%s",
                     row.get("id"),
                 )
+        if row.get("centre_kind") and str(row["centre_kind"]).strip().upper() != "CENTER":
+            logger.warning("Marengo client kind %r is not a centre; leaving centre fields empty for source study id=%s", row["centre_kind"], row.get("id"))
+            row = {**row, "centre_id": None, "centre_name": None}
         return {
-            **{key: value for key, value in row.items() if key != "image_count"},
+            **{key: value for key, value in row.items() if key not in {"image_count", "centre_kind"}},
             "modality": modality,
             "credits_used": credits_used,
         }
@@ -365,6 +400,17 @@ def import_marengo_source(source: "Source", batch_size: int, dry_run: bool = Fal
                                 lookup, params
                             ).mappings().all()]
                         counts["studies_imported"] = counts.get("studies_imported", 0) + len(study_rows)
+                        if not dry_run:
+                            _upsert_batch(portal_db, source.instance_code, "studies", study_rows)
+                elif table == "report_reviews":
+                    for review_row in rows:
+                        if not review_row.get("study_id"):
+                            continue
+                        with source_engine.connect() as connection:
+                            study_rows = [dict(row) for row in connection.execute(
+                                STUDY_LOOKUP_BY_ID, {"study_id": review_row["study_id"]}
+                            ).mappings().all()]
+                        counts["studies_imported"] += len(study_rows)
                         if not dry_run:
                             _upsert_batch(portal_db, source.instance_code, "studies", study_rows)
             else:

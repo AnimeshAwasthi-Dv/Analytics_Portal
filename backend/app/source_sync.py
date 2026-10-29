@@ -37,14 +37,18 @@ class Source:
 SOURCE_SQL = {
     "pacs": text('''
         SELECT pj.id AS source_id,
+               abs."studyInstanceUid" AS source_study_uid,
+               CASE WHEN UPPER(BTRIM(c.kind::text)) = 'CENTER' THEN c.id::text END AS centre_id,
+               CASE WHEN UPPER(BTRIM(c.kind::text)) = 'CENTER' THEN c.name END AS centre_name,
+               c.kind AS centre_kind,
                COALESCE(abs.modalities[1], pj."serviceType") AS modality,
                pj."createdAt" AS processing_created_at,
                pj."completedAt" AS processing_completed_at,
                abs."instanceCount" AS image_count,
-               abs."studyInstanceUid" AS source_study_uid,
                pj."serviceType" AS service_type,
                COALESCE(abs."studyDescription", pj."uploadName", pj."serviceType") AS study_description
         FROM public.processing_jobs AS pj
+        LEFT JOIN public.clients AS c ON c.id = pj."clientId"
         LEFT JOIN LATERAL (
             SELECT b."studyDescription", b.modalities,
                    b."instanceCount", b."studyInstanceUid"
@@ -323,9 +327,7 @@ def import_source(source: Source, batch_size: int, dry_run: bool = False,
         )
         if only_source_id is not None:
             existing_query = existing_query.filter(SyncRecord.source_record_id == str(only_source_id))
-        existing_records = {
-            str(record.source_record_id): record for record in existing_query.all()
-        }
+        existing_records = {str(record.source_record_id): record for record in existing_query.all()}
 
         while True:
             with source_engine.connect() as connection:
@@ -339,7 +341,15 @@ def import_source(source: Source, batch_size: int, dry_run: bool = False,
             for row in rows:
                 record_id = str(row["source_id"])
                 if record_id in existing_records:
-                    # Repeated notifications represent the same credit event.
+                    # Refresh centre metadata on backfill and notifications without
+                    # recalculating an existing credit event.
+                    existing = existing_records[record_id]
+                    if not dry_run and isinstance(existing, SyncRecord):
+                        existing.centre_id = row.get("centre_id")
+                        existing.centre_name = row.get("centre_name")
+                        existing.source_study_uid = row.get("source_study_uid")
+                    if row.get("centre_kind") and str(row["centre_kind"]).strip().upper() != "CENTER":
+                        logger.warning("PACS client kind %r is not a centre; leaving centre fields empty for source record %s", row["centre_kind"], record_id)
                     skipped += 1
                     continue
                 try:
@@ -353,22 +363,28 @@ def import_source(source: Source, batch_size: int, dry_run: bool = False,
                         "Unrecognized modality from source=%s; stored source value and applied the non-X-ray credit rule",
                         source.name,
                     )
+                if row.get("centre_kind") and str(row["centre_kind"]).strip().upper() != "CENTER":
+                    logger.warning("PACS client kind %r is not a centre; leaving centre fields empty for source record %s", row["centre_kind"], record_id)
                 if dry_run:
                     imported += 1
                     continue
-                portal_db.add(SyncRecord(
+                new_record = SyncRecord(
                     instance_code=source.instance_code,
                     source_record_id=record_id,
+                    source_study_uid=row.get("source_study_uid"),
+                    centre_id=row.get("centre_id"),
+                    centre_name=row.get("centre_name"),
                     modality=payload["modality"],
                     study_description=payload["study_description"],
                     processing_created_at=payload["processing_created_at"],
                     processing_completed_at=payload["processing_completed_at"],
                     credits_used=payload["credits_used"],
                     sync_status="SYNCED",
-                ))
+                )
+                portal_db.add(new_record)
                 # The key also reserves duplicate rows in the same batch
                 # before the next database commit.
-                existing_records[record_id] = True
+                existing_records[record_id] = new_record
                 imported += 1
             if not dry_run:
                 portal_db.commit()
