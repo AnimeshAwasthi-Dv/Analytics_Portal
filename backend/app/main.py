@@ -6,6 +6,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.auth import APP_ENV, COOKIE_SECURE
 from app.routes import router
+from app.command_api import router as command_router
+from app.analysis_assistant import router as assistant_router
+from app.assistant_api import router as conversation_router
+from app.operations_api import router as operations_router
+from app.pacs_api import router as pacs_router
+from app.pacs_documents import public_router
 from app.traffic_middleware import TrafficMonitoringMiddleware
 
 production = APP_ENV in {"production", "prod"}
@@ -43,12 +49,18 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
 app.add_middleware(TrafficMonitoringMiddleware)
 
 app.include_router(router)
+app.include_router(command_router)
+app.include_router(assistant_router)
+app.include_router(conversation_router)
+app.include_router(operations_router)
+app.include_router(pacs_router)
+app.include_router(public_router)
 
 
 @app.get("/")

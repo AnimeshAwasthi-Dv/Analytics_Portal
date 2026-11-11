@@ -13,6 +13,8 @@ class UserResponse(BaseModel):
     name: str
     email: EmailStr
     canManageControl: bool = False
+    role: str = "viewer"
+    permissions: list[str] = Field(default_factory=list)
 
     class Config:
         from_attributes = True

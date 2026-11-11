@@ -3,7 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <script>
-      if (window.location.pathname !== "/" && window.location.pathname !== "/login") {
+      if (
+        window.location.pathname !== "/" &&
+        window.location.pathname !== "/login"
+      ) {
         document.documentElement.classList.add("app-starting");
       }
     </script>
@@ -18,24 +21,26 @@
         align-items: center;
         justify-content: center;
         padding: 1rem;
-        background: #090e1a;
-        color: #cbd5e1;
-        font: 14px system-ui, sans-serif;
+        background: #191d24;
+        color: #b8c7d9;
+        font:
+          14px system-ui,
+          sans-serif;
       }
     </style>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/webp" href="/favicon.webp" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="DecXpert Control Panel for managing sync instances, API credentials, users, and analytics."
+      content="Dectrocel organization command: portal operations, service analytics, licensing and team access."
     />
     <meta name="robots" content="noindex, nofollow" />
-    <title>DecXpert Control Panel</title>
+    <title>Dectrocel | Organization Command</title>
   </head>
   <body>
     <div id="root">
       <div class="initial-startup" role="status">
-        Connecting to DecXpert Control Panel...
+        Opening Dectrocel organization command...
       </div>
     </div>
     <script type="module" src="/src/main.tsx"></script>

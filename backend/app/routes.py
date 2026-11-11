@@ -43,6 +43,7 @@ from app.auth import (
     TOKEN_EXPIRATION,
 )
 from app.modality import MODALITY_CATEGORIES, normalize_modality
+from app.permissions import ROLE_PERMISSIONS, role_for, license_writer
 
 
 router = APIRouter()
@@ -192,7 +193,9 @@ def as_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-def is_control_admin(user: User) -> bool:
+def is_control_admin(user: User, db: Session | None = None) -> bool:
+    if db is not None and role_for(user, db) == "super_admin":
+        return True
     admin_email = os.getenv(
         "INITIAL_ADMIN_EMAIL",
         "admin@central-sync.com",
@@ -200,8 +203,8 @@ def is_control_admin(user: User) -> bool:
     return user.email.strip().casefold() == admin_email
 
 
-def require_control_admin(user: User, admin_password: str) -> None:
-    if not is_control_admin(user):
+def require_control_admin(user: User, admin_password: str, db: Session | None = None) -> None:
+    if not is_control_admin(user, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the configured administrator can manage Control.",
@@ -264,7 +267,9 @@ def login(
             "id": user.id,
             "name": user.name,
             "email": user.email,
-            "canManageControl": is_control_admin(user),
+            "canManageControl": is_control_admin(user, db),
+            "role": role_for(user, db),
+            "permissions": sorted(ROLE_PERMISSIONS[role_for(user, db)]),
         }
     })
 
@@ -296,13 +301,16 @@ def logout():
     response_model=UserResponse
 )
 def get_profile(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     return {
         "id": current_user.id,
         "name": current_user.name,
         "email": current_user.email,
-        "canManageControl": is_control_admin(current_user),
+        "canManageControl": is_control_admin(current_user, db),
+        "role": role_for(current_user, db),
+        "permissions": sorted(ROLE_PERMISSIONS[role_for(current_user, db)]),
     }
 
 
@@ -311,7 +319,7 @@ def get_control_overview(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if not is_control_admin(current_user):
+    if not is_control_admin(current_user, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the configured administrator can access Control.",
@@ -350,7 +358,7 @@ def create_control_api_key(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_control_admin(current_user, data.adminPassword)
+    require_control_admin(current_user, data.adminPassword, db)
     key_name = data.keyName.strip()
     api_key = data.apiKey.strip()
     if not key_name or not api_key:
@@ -386,9 +394,10 @@ def create_control_api_key(
 
 @router.post("/api/v1/control/api-keys/generate")
 def generate_control_api_key(
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if not is_control_admin(current_user):
+    if not is_control_admin(current_user, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the configured administrator can manage Control.",
@@ -405,7 +414,7 @@ def create_control_user(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_control_admin(current_user, data.adminPassword)
+    require_control_admin(current_user, data.adminPassword, db)
     email = str(data.email).strip().casefold()
     if db.query(User.id).filter(func.lower(User.email) == email).first():
         raise HTTPException(
@@ -1790,7 +1799,7 @@ def list_license_plans(service: str | None = None, page: int | None = None, page
 
 @router.post("/api/v1/desktop/plans", status_code=status.HTTP_201_CREATED)
 def create_license_plan(data: LicensePlanCreate, db: Session = Depends(get_db),
-                        current_user: User = Depends(get_current_user)):
+                        current_user: User = Depends(license_writer)):
     service = _license_service(data.service)
     name = data.name.strip()
     if not name:
@@ -1808,7 +1817,7 @@ def create_license_plan(data: LicensePlanCreate, db: Session = Depends(get_db),
 
 @router.put("/api/v1/desktop/plans/{plan_id}")
 def update_license_plan(plan_id: int, data: LicensePlanUpdate, db: Session = Depends(get_db),
-                        current_user: User = Depends(get_current_user)):
+                        current_user: User = Depends(license_writer)):
     plan = db.query(LicensePlan).filter(LicensePlan.plan_id == plan_id).first()
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found.")
@@ -1829,7 +1838,7 @@ def update_license_plan(plan_id: int, data: LicensePlanUpdate, db: Session = Dep
 
 @router.delete("/api/v1/desktop/plans/{plan_id}")
 def delete_license_plan(plan_id: int, db: Session = Depends(get_db),
-                        current_user: User = Depends(get_current_user)):
+                        current_user: User = Depends(license_writer)):
     plan = db.query(LicensePlan).filter(LicensePlan.plan_id == plan_id).first()
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found.")
@@ -1883,7 +1892,7 @@ def list_desktop_licenses(service: str | None = None, search: str | None = None,
 
 @router.post("/api/v1/desktop/licenses", status_code=status.HTTP_201_CREATED)
 def create_desktop_license(data: LicenseCreate, db: Session = Depends(get_db),
-                           current_user: User = Depends(get_current_user)):
+                           current_user: User = Depends(license_writer)):
     service = _license_service(data.service)
     platform = data.platform.strip().upper()
     if platform not in {"DXP", "DCP", "CXR"}:
@@ -1901,7 +1910,7 @@ def create_desktop_license(data: LicenseCreate, db: Session = Depends(get_db),
 
 @router.put("/api/v1/desktop/licenses/{license_id}")
 def update_desktop_license(license_id: int, data: LicenseCreate, db: Session = Depends(get_db),
-                           current_user: User = Depends(get_current_user)):
+                           current_user: User = Depends(license_writer)):
     item = db.query(DesktopLicense).filter(DesktopLicense.license_id == license_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="License not found.")
@@ -1926,7 +1935,7 @@ def update_desktop_license(license_id: int, data: LicenseCreate, db: Session = D
 
 @router.delete("/api/v1/desktop/licenses/{license_id}")
 def delete_desktop_license(license_id: int, db: Session = Depends(get_db),
-                           current_user: User = Depends(get_current_user)):
+                           current_user: User = Depends(license_writer)):
     item = db.query(DesktopLicense).filter(DesktopLicense.license_id == license_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="License not found.")
@@ -1937,7 +1946,7 @@ def delete_desktop_license(license_id: int, db: Session = Depends(get_db),
 
 @router.post("/api/v1/desktop/licenses/bulk", status_code=status.HTTP_201_CREATED)
 def bulk_create_desktop_licenses(data: LicenseBulkCreate, db: Session = Depends(get_db),
-                                 current_user: User = Depends(get_current_user)):
+                                 current_user: User = Depends(license_writer)):
     service = _license_service(data.service)
     platform = data.platform.strip().upper()
     if platform not in {"DXP", "DCP", "CXR"}:

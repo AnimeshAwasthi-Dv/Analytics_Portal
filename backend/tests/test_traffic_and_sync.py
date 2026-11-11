@@ -1,4 +1,5 @@
 import asyncio
+import json
 import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -21,6 +22,7 @@ from app.routes import (
     get_analytics,
     get_dashboard,
     get_traffic_instances,
+    get_traffic_details,
     get_traffic_overview,
     get_traffic_summary,
     traffic_date_bounds,
@@ -47,7 +49,7 @@ class TrafficAndSyncTests(unittest.TestCase):
                 "timezone", 2, lambda _zone, value: value
             ),
         )
-        Base.metadata.create_all(bind=self.engine)
+        Base.metadata.create_all(bind=self.engine, tables=[t for t in Base.metadata.sorted_tables if t.schema != "ai"])
         self.session = sessionmaker(bind=self.engine)()
 
     def tearDown(self):
@@ -123,12 +125,12 @@ class TrafficAndSyncTests(unittest.TestCase):
             "custom", today, today, self.session, current_user=None
         )
 
-        self.assertEqual(summary["overview"]["totalRequests"], 2)
-        self.assertEqual(summary["overview"]["totalDataBytes"], 35)
+        self.assertEqual(summary["overview"]["totalRequests"], 3)
+        self.assertEqual(summary["overview"]["totalDataBytes"], 36)
         self.assertEqual(summary["overview"]["activeInstances"], 2)
         self.assertEqual(len(summary["daily"]), 1)
-        self.assertEqual(len(summary["dailyByInstance"]), 2)
-        self.assertEqual(len(summary["hourlyByInstance"]), 2)
+        self.assertEqual(len(summary["dailyByInstance"]), 3)
+        self.assertEqual(len(summary["hourlyByInstance"]), 3)
         hourly_by_instance = {
             row["instance"]: row for row in summary["hourlyByInstance"]
         }
@@ -144,12 +146,13 @@ class TrafficAndSyncTests(unittest.TestCase):
             {"agent-1", "agent-2"},
         )
         self.assertEqual(summary["instances"][0]["successRate"], 100.0)
-        self.assertEqual(len(summary["recentRequests"]), 2)
-        self.assertEqual(summary["recentRequests"][0]["route"], "/sync")
-        self.assertEqual(summary["recentRequests"][0]["statusCode"], 200)
+        details = get_traffic_details("custom", today, today, self.session, current_user=None)["items"]
+        self.assertEqual(len(details), 3)
+        self.assertEqual({r["route"] for r in details}, {"/sync", "/unattributed"})
+        self.assertEqual(details[0]["successRate"], 100.0)
         self.assertEqual(
-            sum(row["totalDataBytes"] for row in summary["recentRequests"]),
-            35,
+            sum(row["totalDataBytes"] for row in details),
+            36,
         )
 
     def test_heartbeat_requires_key_and_persists_instance_last_seen(self):
@@ -306,7 +309,7 @@ class TrafficAndSyncTests(unittest.TestCase):
                 .filter(ApiKey.key_name == "Instance Three")
                 .one()
             )
-            self.assertEqual(created_key["keyName"], "Instance Three")
+            self.assertEqual(json.loads(created_key.body)["keyName"], "Instance Three")
             self.assertEqual(
                 stored_key.api_key, hash_api_key("instance-three-secret")
             )
@@ -455,7 +458,8 @@ class TrafficAndSyncTests(unittest.TestCase):
         finally:
             event.remove(self.engine, "before_cursor_execute", count_statement)
 
-        self.assertEqual(len(executed_statements), 4)
+        # Study descriptions and Marengo aggregates add fixed queries; guard against per-record queries.
+        self.assertLessEqual(len(executed_statements), 9)
         self.assertEqual(analytics["summary"]["totalRecords"], 3)
         self.assertEqual(analytics["summary"]["totalCredits"], 7)
         self.assertEqual(analytics["summary"]["sourceInstances"], 2)
@@ -466,7 +470,7 @@ class TrafficAndSyncTests(unittest.TestCase):
         )
         self.assertEqual(
             {row["modality"] for row in analytics["daily"]},
-            {"CT", "MR"},
+            {"CT", "MRI"},
         )
         self.assertEqual(
             sum(row["records"] for row in analytics["daily"]),

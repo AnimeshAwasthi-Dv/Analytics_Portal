@@ -18,6 +18,8 @@ load_dotenv(
 
 from app.database import Base
 from app import models
+from app import command_models
+from app import pacs_documents
 
 config = context.config
 

@@ -189,6 +189,7 @@ class MarengoStudy(Base):
     __table_args__ = (
         Index("ix_marengo_studies_modality_status", "modality", "status"),
         Index("ix_marengo_studies_centre", "centre_id", "instance_code"),
+        Index("ix_marengo_studies_worklist", "created_at", "instance_code", "id"),
     )
 
     instance_code = Column(String(50), primary_key=True)
@@ -228,6 +229,7 @@ class MarengoReportReview(Base):
     __table_args__ = (
         Index("ix_marengo_report_reviews_modality_status", "modality", "status"),
         Index("ix_marengo_report_reviews_study", "study_id"),
+        Index("ix_marengo_reviews_worklist", "created_at", "instance_code", "id"),
     )
 
     instance_code = Column(String(50), primary_key=True)

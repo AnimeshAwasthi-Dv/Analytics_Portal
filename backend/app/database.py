@@ -38,7 +38,14 @@ if DATABASE_URL.startswith("postgresql+psycopg2://"):
 if not DATABASE_URL.startswith(("postgresql://", "postgresql+psycopg://")):
     raise RuntimeError("Only PostgreSQL DATABASE_URL values are supported")
 
-engine = create_engine(DATABASE_URL)
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_size=5,
+    max_overflow=5,
+    pool_timeout=15,
+    connect_args={"connect_timeout": 8, "options": "-c timezone=UTC -c statement_timeout=15000 -c lock_timeout=3000"},
+)
 
 SessionLocal = sessionmaker(
     autocommit=False,

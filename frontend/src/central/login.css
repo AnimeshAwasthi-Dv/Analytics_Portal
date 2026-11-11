@@ -1,0 +1,48 @@
+/* Critical sign-in styles; clinical workspace styles are deferred. */
+* { box-sizing:border-box; }
+html,body,#root { margin:0;min-height:100%; }
+body { font-family:"Segoe UI",system-ui,sans-serif;background:#151a22; }
+.command-login :is(h1,h2,p) { margin:0; }
+.command-login :is(button,input) { font:inherit; }
+.command-login button { cursor:pointer; }
+/* Central additions use the copied PACS components and pw-* design system. */
+.command-login { min-height:100dvh;display:grid;grid-template-columns:1.15fr 1fr;background:#151a22;color:#edf1f7;font-family:"Segoe UI",sans-serif; }
+.command-login-story { min-height:100dvh;padding:48px 64px 30px;display:flex;flex-direction:column;background:radial-gradient(ellipse at 15% 40%,#1d3449 0,transparent 65%),#1a222d;border-right:1px solid #34404e; }
+.command-login-brand { display:flex;align-items:center;gap:12px;color:inherit;text-decoration:none;width:max-content; }
+.command-login-brand img { width:48px;height:48px;object-fit:contain;padding:5px;border-radius:8px;background:white; }
+.command-login-brand>span { font-size:21px;font-weight:650;letter-spacing:-.5px; }
+.command-login-brand strong { display:block;font-size:10px;letter-spacing:3px;color:#90a9c6;font-weight:500;margin-top:3px; }
+.command-login-intro { margin:auto 0;max-width:510px;padding:64px 0; }
+.command-eyebrow { font-size:10px;letter-spacing:2.1px;font-weight:650;color:#91b2d1; }
+.command-login-intro h1 { font-size:clamp(40px,4.2vw,66px);line-height:1.12;letter-spacing:-2px;font-weight:600;margin:22px 0; }
+.command-login-intro>p { font-size:16px;line-height:1.8;color:#a8b9cc;max-width:420px; }
+.command-network { margin-top:44px;max-width:420px; }
+.command-network-hub { display:flex;align-items:center;justify-content:center;gap:12px;width:235px;margin:auto;padding:16px 18px;background:#283d51;border:1px solid #55728a;border-radius:7px;font-size:13px; }
+.command-network-hub:after { content:"";position:absolute;width:1px;height:20px;background:#52687e;transform:translateY(36px); }
+.command-network-portals { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:30px; }
+.command-network-portals>div { display:flex;align-items:center;gap:10px;border:1px solid #3d5063;background:#213040;border-radius:5px;padding:13px;font-size:12px;color:#bacde0; }
+.command-login-story>footer { display:flex;align-items:center;gap:8px;font-size:11px;color:#91a5ba; }
+.command-login-auth { display:flex;flex-direction:column;align-items:center;justify-content:center;padding:64px 40px 28px;min-width:0; }
+.command-login-form { width:100%;max-width:370px;margin:auto; }
+.command-login-form h2 { margin:17px 0 9px;font-size:28px;letter-spacing:-.7px;font-weight:600; }
+.command-login-form>p { color:#93a0b3;font-size:13px;line-height:1.7;margin-bottom:34px; }
+.command-login-form form { display:flex;flex-direction:column;gap:10px; }
+.command-login-form label { font-size:12px;color:#c6d0df;font-weight:600; }
+.command-login-form input { width:100%;height:46px;min-width:0;border:1px solid #3b485a;border-radius:5px;background:#1c2531!important;color:#edf1f7!important;padding:0 13px;font-size:14px;outline:none; }
+.command-login-form input:focus { border-color:#79a7d7;box-shadow:0 0 0 3px #79a7d71a; }
+.command-login-form input::placeholder { color:#8fa1b8; }
+.command-login-form input[aria-invalid=true] { border-color:#da7c81; }
+.command-login-form form>input { margin-bottom:12px; }
+.command-password { position:relative; }
+.command-password input { padding-right:48px; }
+.command-password button { position:absolute;right:0;top:0;height:46px;width:44px;display:grid;place-items:center;border:0;background:none;color:#9caec5;cursor:pointer; }
+.command-login-submit { height:46px;display:flex;align-items:center;justify-content:center;gap:12px;border:1px solid #729dcc;background:#3c6999;color:white;border-radius:5px;margin-top:16px;font-size:13px;font-weight:600;cursor:pointer; }
+.command-login-submit:hover { background:#466f9d; }
+.command-login-submit:disabled { opacity:.65;cursor:wait; }
+.command-login-error { color:#f3a4a9;font-size:12px;line-height:1.6; }
+.command-login-help { display:flex;align-items:flex-start;gap:9px;margin-top:26px;padding-top:22px;border-top:1px solid #2f3a49;font-size:11px;line-height:1.7;color:#8899b0; }
+.command-login-help svg { flex:none;margin-top:2px; }
+.command-login-auth>footer { padding-top:40px;color:#a2b2c7;font-size:10px;letter-spacing:.5px; }
+@media(max-width:850px) { .command-login { grid-template-columns:1fr 1.1fr; }.command-login-story { padding:36px 30px; }.command-network-portals { grid-template-columns:1fr; }.command-login-auth { padding:40px 26px 24px; } }
+@media(max-width:600px) { .command-login { display:flex;flex-direction:column; }.command-login-story { min-height:0;padding:26px;border-right:0;border-bottom:1px solid #34404e; }.command-login-intro { padding:26px 0 4px; }.command-login-intro h1 { font-size:32px;margin:10px 0; }.command-login-intro h1 br { display:none; }.command-login-intro>p { font-size:12px; }.command-network,.command-login-story>footer,.command-login-intro>.command-eyebrow { display:none; }.command-login-auth { padding:34px 26px 24px;flex:1; }.command-login-form h2 { font-size:24px; }.command-login-form>p { margin-bottom:24px; } }
+.central-boot { display:grid;place-items:center;min-height:100dvh;background:#191d24;color:#dce5f2;font:14px "Segoe UI",sans-serif; }

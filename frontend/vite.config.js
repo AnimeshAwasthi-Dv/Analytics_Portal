@@ -14,9 +14,9 @@ export default defineConfig(({ mode }) => {
       warmup: {
         clientFiles: [
           "src/main.tsx",
-          "src/App.tsx",
-          "src/pages/LoginPage.tsx",
-          "src/pages/DashboardPage.tsx",
+          "src/pacs/App.tsx",
+          "src/pacs/LoginView.tsx",
+          "src/central/CentralContent.tsx",
         ],
       },
       ...(apiTarget && {
