@@ -23,7 +23,7 @@ export function CommandVisuals({ data, start, end, overview = false }: { data: V
   const days: { day: string; reported: number; unprocessed: number }[] = [];
   const daily = new Map(data.daily.map(d => [d.key, d]));
   const bucket = data.dailyBucket ?? "day";
-  const first = new Date(`${start}T12:00:00Z`), last = new Date(`${end}T12:00:00Z`);
+  const first = new Date(`${start || data.daily[0]?.key || end || new Date().toISOString().slice(0,10)}T12:00:00Z`), last = new Date(`${end || new Date().toISOString().slice(0,10)}T12:00:00Z`);
   if(bucket!=="day") { first.setUTCDate(1); last.setUTCDate(1); }
   if(bucket==="year") { first.setUTCMonth(0); last.setUTCMonth(0); }
   for (let d = new Date(first); d <= last;) {
@@ -44,7 +44,7 @@ export function CommandVisuals({ data, start, end, overview = false }: { data: V
   const completion = data.totals.events ? Math.round(data.totals.success / data.totals.events * 100) : null;
   return <div className="command-visuals" aria-label="Operational charts">
     <section className="command-panel command-trend">
-      <PanelTitle icon={<Activity size={18}/>} title="Study activity" subtitle={`${dateLabel(start)} – ${dateLabel(end)} · IST`} aside={<><strong>{fmt(data.totals.success)}</strong><span>reported studies / AI uses</span></>}/>
+      <PanelTitle icon={<Activity size={18}/>} title="Study activity" subtitle={!start&&!end?"All time · IST":`${start?dateLabel(start):"Beginning"} – ${end?dateLabel(end):"Today"} · IST`} aside={<><strong>{fmt(data.totals.success)}</strong><span>reported studies / AI uses</span></>}/>
       <div className="command-chart-legend"><span><i style={{ background: colors[0] }}/>Reported / AI endpoint uses</span><span><i style={{ background: colors[3] }}/>Not processed</span></div>
       <div className="command-chart command-chart-trend" role="img" aria-label={`Study activity chart: ${fmt(data.totals.success)} reported and ${fmt(data.totals.pending)} not processed`}>
         {data.totals.events ? <DeferredChart><TrendChart data={days.map(d=>({label:bucketLabel(d.day),value:d.reported,secondary:d.unprocessed}))}/></DeferredChart> : <Empty text="No study activity in this period"/>}

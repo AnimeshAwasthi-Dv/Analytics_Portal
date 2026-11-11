@@ -65,3 +65,13 @@
 
 .pacs-workspace .central-date-toolbar>label { color:#b8c7d9!important; }
 .command-panel { content-visibility:auto;contain-intrinsic-size:auto 360px; }
+
+.central-workspace-switcher { align-self:stretch;align-items:stretch;gap:4px;overflow-x:auto;min-width:0; }
+.pacs-workspace .central-workspace-switcher button { height:auto;flex:none;border-radius:0 0 9px 9px;border:1px solid #41516a;border-top:3px solid transparent;padding:10px 12px 14px;background:#252e3b;color:#b9c9dd;font-size:12px; }
+.pacs-workspace .central-workspace-switcher button.active { border-top-color:#79b7f0;background:#344963;color:#fff;box-shadow:0 3px 0 #79b7f0; }
+.central-nav-group { display:flex;flex-direction:column;align-items:stretch;gap:3px; }
+.pacs-workspace .central-nav-group .pw-nav { display:flex;width:100%;flex:none; }
+.pw-sidebar-collapsed .central-nav-group .pw-nav { justify-content:center;padding-inline:0; }
+@media(max-width:1100px) { .pw-header { flex-wrap:wrap;height:auto; }.central-workspace-switcher { order:5;flex-basis:100%; }.pacs-workspace { grid-template-rows:auto minmax(0,1fr); } }
+
+@media(max-width:800px) { .pacs-workspace { grid-template-rows:auto auto minmax(0,1fr); }.pacs-workspace.pw-sidebar-collapsed { grid-template-rows:auto minmax(0,1fr); } }

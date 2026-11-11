@@ -54,6 +54,10 @@ def analytics(start: date | None = None, end: date | None = None,
               center: str | None = Query(None, max_length=160), service: str | None = Query(None, max_length=120),
               db: Session = Depends(get_db), user=Depends(require("analytics:read")),
               modality: Literal["X-Ray", "Special X-Ray", "CT", "MRI", "Mammography", "USG", "PET-CT"] | None = None):
+    if start is None:
+        earliest = [db.query(func.min(model.occurred_at)).scalar() for model in (StudyFact, UsageFact, UserActivity)]
+        dates = [value.replace(tzinfo=value.tzinfo or timezone.utc).astimezone(IST).date() for value in earliest if value]
+        start = min(dates) if dates else end or datetime.now(IST).date()
     lower, upper, start, end = date_bounds(start, end)
     e = StudyFact
     filters = [e.occurred_at >= lower, e.occurred_at < upper]

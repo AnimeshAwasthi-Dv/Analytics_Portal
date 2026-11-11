@@ -36,14 +36,67 @@ def report(source, identity):
     return rows[0]
 
 
-def pdf(source, identity):
-    from weasyprint import HTML
+def signed_document(source, payload, variant="with-letterhead", format="pdf"):
+    """Read the original provider file, never the placeholder report HTML."""
+    import boto3
+    from botocore.config import Config
+    from botocore.exceptions import BotoCoreError, ClientError
+    from app.pacs_viewer import config, local_file
+    if variant not in {"with-letterhead", "without-letterhead"} or format not in {"pdf", "docx"}:
+        raise HTTPException(422, "Unsupported report version.")
+    files = payload.get("signedReportFiles") or (payload.get("renewist") or {}).get("signedFiles") or {}
+    key = ("withoutLetterheadPdf" if variant == "without-letterhead" else "pdf") if format == "pdf" else "docx"
+    file = files.get(key)
+    if not file:
+        raise HTTPException(404, "This signed report version is not available from Renewist.")
+    location = file.get("storage") or {}
+    cfg = config(source.code)
+    local = local_file(location.get("localPath") or file.get("path"), [r for r in cfg.get("UPLOAD_ROOTS", "").split(";") if r])
+    limit = 32 * 1024 * 1024
+    if local:
+        if local.stat().st_size > limit:
+            raise HTTPException(413, "Signed report exceeds the document size limit.")
+        data = local.read_bytes()
+    else:
+        buckets = {v for k,v in cfg.items() if k.startswith("S3_") and k.endswith("_BUCKET") and v}
+        if location.get("bucket") not in buckets or not location.get("key"):
+            raise HTTPException(404, "Signed report is not available in connected storage.")
+        if not cfg.get("S3_ACCESS_KEY_ID") or not cfg.get("S3_SECRET_ACCESS_KEY"):
+            raise HTTPException(503, "Report storage credentials are not configured for this portal.")
+        client = boto3.client("s3", aws_access_key_id=cfg["S3_ACCESS_KEY_ID"], aws_secret_access_key=cfg["S3_SECRET_ACCESS_KEY"],
+            region_name=cfg.get("S3_REPORT_REGION") or cfg.get("S3_REGION", "us-east-1"), endpoint_url=cfg.get("S3_ENDPOINT") or None,
+            config=Config(connect_timeout=4, read_timeout=12, retries={"max_attempts":1}, s3={"addressing_style":"path" if cfg.get("S3_FORCE_PATH_STYLE")=="true" else "auto"}))
+        try:
+            obj = client.get_object(Bucket=location["bucket"], Key=location["key"])
+            body = obj["Body"]
+            try:
+                if obj.get("ContentLength", 0) > limit:
+                    raise HTTPException(413, "Signed report exceeds the document size limit.")
+                data = body.read(limit + 1)
+            finally:
+                body.close()
+        except (BotoCoreError, ClientError):
+            raise HTTPException(503, "The signed report could not be retrieved from source storage.") from None
+    if len(data) > limit:
+        raise HTTPException(413, "Signed report exceeds the document size limit.")
+    if format == "pdf" and not data.startswith(b"%PDF-"):
+        raise HTTPException(502, "The source signed report is not a valid PDF.")
+    mime = "application/pdf" if format == "pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    return Response(data, media_type=mime, headers={**PRIVATE, "Content-Disposition": f'inline; filename="signed-report.{format}"'})
+
+
+def pdf(source, identity, variant="with-letterhead", format="pdf"):
     from urllib.request import urlopen
     row = report(source, identity)
     payload = row.get("editedReportJson") or row.get("aiReportJson") or {}
+    if isinstance(payload, dict) and (payload.get("renewist") or payload.get("signedReportFiles")):
+        return signed_document(source, payload, variant, format)
+    if format != "pdf":
+        raise HTTPException(404, "This report has no original Word document.")
     html = payload.get("htmlReport") if isinstance(payload, dict) else None
     if not html:
         raise HTTPException(404, "This report has no printable document.")
+    from weasyprint import HTML
     # Source HTML cannot use the PDF renderer to access server files or internal URLs.
     def fetch(url, *args, **kwargs):
         if not url.startswith("data:"):
@@ -111,7 +164,7 @@ def shared(token: str, request: Request, rest: str = "", db=Depends(get_db)):
                 return JSONResponse(jsonable_encoder({**{key:row.get(key) for key in ("id","patientName","patientId","modality","serviceName","updatedAt","generatedAt","status")}, "includeViewer":share.include_viewer, "jsonPartial":False}),headers=PRIVATE)
             return JSONResponse({"id":share.target_id, "includeViewer":True, "studyOnly":True, "patientName":"Shared study"},headers=PRIVATE)
         if rest == "pdf" and share.kind == "report":
-            return pdf(source, share.target_id)
+            return pdf(source, share.target_id, request.query_params.get("variant", "with-letterhead"), request.query_params.get("format", "pdf"))
         if not share.include_viewer:
             raise HTTPException(403, "This link includes the report only.")
         if rest == "download":

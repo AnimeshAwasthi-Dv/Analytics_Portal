@@ -113,6 +113,18 @@ class StudyAnalyticsTests(unittest.TestCase):
         self.assertEqual(result.status_code,200,result.text)
         return result.json()
 
+    def test_default_analytics_includes_historical_studies(self):
+        historical = self.db.query(StudyFact).filter_by(source_id="r1").one()
+        historical.occurred_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        self.db.commit()
+        response = self.client.get("/api/v1/command/analytics", params={"portal":"pacs"})
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertEqual(result["totals"]["success"], 4)
+        self.assertTrue(any(row["key"].startswith("2020") for row in result["daily"]))
+        filtered = self.analytics(portal="pacs")
+        self.assertEqual(filtered["totals"]["success"], 3)
+
     def test_multi_year_ranges_preserve_totals_and_use_month_buckets(self):
         response=self.client.get("/api/v1/command/analytics",params={"start":"2025-01-01","end":"2027-12-31","portal":"pacs"})
         self.assertEqual(response.status_code,200,response.text)

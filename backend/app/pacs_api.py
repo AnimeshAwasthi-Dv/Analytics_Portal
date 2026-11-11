@@ -376,7 +376,7 @@ def read_bridge(portal,path,request,db,user):
         parts = path.split("/")
         if len(parts) >= 3 and parts[-1] in {"pdf", "download"}:
             if parts[0] == "reports" or parts[:2] in (["client","reports"], ["radiologist","reports"]):
-                return pdf(source, parts[-2])
+                return pdf(source, parts[-2], q.get("variant", "with-letterhead"), q.get("format", "pdf"))
             if parts[:3] == ["client","study-sync","available-studies"]:
                 return download(source, "bridge-study", parts[-2])
         if path == "reports":

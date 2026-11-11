@@ -20,7 +20,7 @@ export function saveSection(label: string) {
   history.pushState({},"",code === "all" ? `/command/${sectionSlug(label)}` : `/portal/${code}/${sectionSlug(label)}`);
 }
 export async function commandGet<T>(path: string, params: Record<string,string> = {}): Promise<T> {
-  const query = new URLSearchParams(params);
+  const query = new URLSearchParams(Object.fromEntries(Object.entries(params).filter(([,value])=>value!=="")));
   const response = await nativeFetch(`${apiBase}/api/v1/command/${path}${query.size?`?${query}`:""}`,{credentials:"include"});
   const body = await response.json();
   if(!response.ok) throw new Error(body.detail || "Unable to load central operations.");
