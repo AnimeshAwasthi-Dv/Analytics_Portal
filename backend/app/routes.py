@@ -2,8 +2,9 @@ import logging
 import os
 import secrets
 from datetime import date, datetime, time, timedelta, timezone
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import case, func
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -33,6 +34,11 @@ from app.schemas import (
     ControlApiKeyCreate,
     ControlUserCreate,
     LicensePlanCreate, LicensePlanUpdate, LicenseCreate, LicenseBulkCreate,
+    SsoInitiateRequest, SsoVerifyRequest,
+)
+from app.sso import (
+    create_sso_authorization_code,
+    verify_and_consume_sso_code,
 )
 from app.auth import (
     verify_password,
@@ -312,6 +318,57 @@ def get_profile(
         "role": role_for(current_user, db),
         "permissions": sorted(ROLE_PERMISSIONS[role_for(current_user, db)]),
     }
+
+
+# ============================================================
+# SINGLE SIGN-ON (SSO) TO TASK MANAGER
+# ============================================================
+
+@router.post("/api/central/sso/task-manager/initiate")
+@router.post("/api/sso/task-manager/initiate")
+def initiate_task_manager_sso(
+    data: Optional[SsoInitiateRequest] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    target = data.redirectTarget if data else None
+    user_pacs_role = role_for(current_user, db)
+    return create_sso_authorization_code(
+        user=current_user,
+        pacs_role=user_pacs_role,
+        db=db,
+        redirect_target=target,
+    )
+
+
+@router.get("/api/central/sso/task-manager/authorize")
+@router.get("/api/sso/task-manager/authorize")
+def authorize_task_manager_sso(
+    redirect: bool = False,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    user_pacs_role = role_for(current_user, db)
+    auth_data = create_sso_authorization_code(
+        user=current_user,
+        pacs_role=user_pacs_role,
+        db=db,
+    )
+    if redirect:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(auth_data["redirectUrl"], status_code=status.HTTP_302_FOUND)
+    return auth_data
+
+
+@router.post("/api/central/sso/verify")
+@router.post("/api/sso/verify")
+def verify_sso(
+    data: SsoVerifyRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    auth_secret = request.headers.get("Authorization") or request.headers.get("X-SSO-Secret")
+    return verify_and_consume_sso_code(data.code, db, auth_secret=auth_secret)
 
 
 @router.get("/api/v1/control")

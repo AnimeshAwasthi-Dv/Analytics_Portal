@@ -55,3 +55,18 @@ export async function centralFetch(input: RequestInfo | URL, init: RequestInit =
   }
   return response;
 }
+
+export async function initiateTaskManagerSSO(): Promise<string> {
+  const response = await nativeFetch(`${apiBase}/api/central/sso/task-manager/initiate`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({})
+  });
+  const data = await response.json();
+  if (!response.ok || !data.redirectUrl) {
+    throw new Error(data.detail || "Unable to initiate Single Sign-On to Task Manager.");
+  }
+  return data.redirectUrl;
+}
+

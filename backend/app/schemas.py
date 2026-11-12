@@ -73,3 +73,12 @@ class LicenseBulkCreate(BaseModel):
 
 class LicensePlanUpdate(LicensePlanCreate):
     pass
+
+
+class SsoInitiateRequest(BaseModel):
+    redirectTarget: Optional[str] = None
+
+
+class SsoVerifyRequest(BaseModel):
+    code: str
+
